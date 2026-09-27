@@ -117,7 +117,7 @@ function card(db, ev, viewer, friendsMap) {
     id: ev.id, title: ev.title, category: ev.category, city: ev.city, area: ev.area, zone: ev.zone, venue: ev.venue, lat: ev.lat, lng: ev.lng,
     start: ev.start, end: ev.end, durH: ev.durH, priceMin: ev.priceMin, label: ev.label, image: ev.image,
     fill: +fillRatio(ev).toFixed(2), soldOut: isSoldOut(ev), funScore: funScore(ev),
-    sources: [...new Set(ev.sources.map(s => SOURCE_META[s.source]?.name || s.source))],
+    sources: [...new Set(ev.sources.map(s => s.site || SOURCE_META[s.source]?.name || s.source))],
     ticketing: ev.ticketing || 'funillion', bookingSource: ev.ticketing === 'external' ? (ev.links || []).find(l => l.type === 'tickets')?.source || (ev.links || [])[0]?.source || null : null,
     approxLocation: ev.approxLocation === true || ev.approxLocation === 'failed', allDay: !!ev.allDay,
     saved: viewer ? (db.saves[viewer.id] || []).includes(ev.id) : false,

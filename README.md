@@ -70,6 +70,16 @@ On Railway, demo data is **off by default**: the first deploy removes all fake e
 
 **Razorpay webhook:** Dashboard → Settings → Webhooks → Add: URL `https://<railway-domain>/api/razorpay/webhook`, events `payment.captured`, `order.paid`, `refund.processed`, `refund.failed`, secret = `RAZORPAY_WEBHOOK_SECRET`.
 
+### Funillion crawler (free real events, all cities)
+`server/crawler/` reads public event pages on AllEvents, District, Eventbrite, Townscript, Luma, Unstop and Devfolio (list in `server/crawler/sites.js`), every 12 h:
+1. checks each site's **robots.txt** (skips anything disallowed, honours Crawl-delay) and identifies itself as `FunillionBot`
+2. opens the city listing pages + event sitemaps, then the event pages (one request at a time per site, ≥1.5 s apart; a site that keeps refusing is left alone)
+3. reads the **schema.org Event** data sites publish for search engines — title, date/time, venue, geo, price — and keeps only upcoming, in-person events in our 14 cities
+4. hands them to the aggregator, which merges the same event from different sites into one listing with every booking link
+5. remembers pages it has read, so later runs only fetch new/stale pages
+
+Only facts + a link back are stored (no images or copied descriptions). BookMyShow is off by default because its terms restrict automated access. Admins see per-site stats and a **Run crawler now** button in Organizer → Smart aggregation.
+
 ### Two kinds of events
 - **Listed** (from Google Events): Funillion shows facts + links; booking happens on BookMyShow/District/etc. ("Book on … ↗"). Add affiliate links with `AFFILIATE_TEMPLATES`.
 - **Ticketed on Funillion** (organisers who list with you): real checkout with Razorpay, QR e-tickets, refunds. Only these can be sold on Funillion.

@@ -15,7 +15,7 @@ export async function render(el, _, params) {
 
 async function aggregation(box) {
   loading(box);
-  const { stats: s, google: g, isAdmin, totalEvents, upcoming } = await api('/aggregation');
+  const { stats: s, google: g, crawler: cr, isAdmin, totalEvents, upcoming } = await api('/aggregation');
   const srcs = s ? Object.entries(s.perSource) : [];
   const gl = g?.last;
   box.innerHTML = `
@@ -27,6 +27,15 @@ async function aggregation(box) {
       ${g ? `<div class="kv"><div><b>${g.events}</b><span>events from Google</span></div><div><b>${g.used || 0}/${g.limit}</b><span>searches this month</span></div><div><b>${gl ? timeAgo(gl.finishedAt) : '—'}</b><span>last refresh</span></div>${gl ? `<div><b>${gl.created || 0}</b><span>new last run</span></div>` : ''}</div>
         ${isAdmin ? `<button class="btn dark" id="pull-google" ${g.running ? 'disabled' : ''}>${g.running ? 'Running…' : '↻ Pull real events now'}</button>` : ''}` : ''}
       ${gl?.errors?.length ? `<p class="note" style="flex-basis:100%">⚠ ${gl.errors.slice(0, 3).map(esc).join(' · ')}</p>` : ''}
+    </div>
+    <div class="admin-card crawler-card">
+      <div style="flex:1;min-width:260px"><p class="eyebrow">🕷 FUNILLION CRAWLER</p>
+        <p class="muted small">Reads event pages on AllEvents, District, Eventbrite, Townscript, Luma, Unstop & Devfolio for all cities — free, no API credits. Follows each site's robots.txt, one polite request at a time, and links back to the original page. ${cr.on ? `Runs every ${cr.everyHours} h.` : 'Off (set CRAWLER=on).'}</p></div>
+      <div class="kv"><div><b>${cr.events}</b><span>events found by crawler</span></div><div><b>${cr.lastRun ? timeAgo(cr.lastRun) : '—'}</b><span>last run</span></div><div><b>${cr.pagesRemembered}</b><span>pages remembered</span></div></div>
+      ${isAdmin ? `<button class="btn dark" id="run-crawler" ${cr.running ? 'disabled' : ''}>${cr.running ? '🕷 Crawling… (refresh in a few min)' : '🕷 Run crawler now'}</button>` : ''}
+      ${cr.sites.length ? `<div class="table-wrap" style="flex-basis:100%"><table class="tbl"><thead><tr><th>Site</th><th>Pages read</th><th>Events seen</th><th>New</th><th>Merged</th><th>Blocked by robots</th><th>Notes</th></tr></thead><tbody>
+        ${cr.sites.map(x => `<tr><td><b>${esc(x.name)}</b></td><td>${x.pages}</td><td>${x.eventsFound}</td><td>${x.created}</td><td>${x.merged + x.updated}</td><td>${x.blockedByRobots}</td><td class="small">${esc([...Object.entries(x.skipped).map(([k, v]) => `${v} ${k}`), ...x.errors].join(' · ').slice(0, 160))}</td></tr>`).join('')}
+      </tbody></table></div>` : ''}
     </div>
     <p class="muted small">${upcoming.toLocaleString('en-IN')} upcoming events live · ${totalEvents.toLocaleString('en-IN')} in the database</p>
     ${s ? `<div class="funnel">
@@ -43,6 +52,11 @@ async function aggregation(box) {
     <tbody>${s.merges.slice(0, 30).map(m => `<tr><td>${esc(m.incoming)}</td><td>${esc(m.source)}</td><td><a class="link" href="#/event/${m.eventId}">${esc(m.into)}</a></td><td>${esc(city(m.city).short)}</td><td><span class="score" style="--s:${m.score}">${Math.round(m.score * 100)}%</span></td></tr>`).join('')}</tbody></table></div>` : ''}
   </div>`;
   $('#rerun')?.addEventListener('click', async () => { $('#rerun').textContent = 'Running…'; const { stats } = await api('/aggregation/run', { method: 'POST' }); toast(`Done: ${stats.raw} listings checked · ${stats.created} new · ${stats.updated + stats.merged} matched existing`); aggregation(box); });
+  $('#run-crawler')?.addEventListener('click', async () => {
+    const b = $('#run-crawler'); b.disabled = true; b.textContent = '🕷 Crawling… (takes a few minutes)';
+    try { await api('/crawler/run', { method: 'POST', body: {} }); toast('Crawler started — new events appear as it finds them. Refresh this page in a few minutes.'); }
+    catch (e) { toast(e.message, 'error'); b.disabled = false; }
+  });
   $('#pull-google')?.addEventListener('click', async () => {
     const b = $('#pull-google'); b.disabled = true; b.textContent = 'Searching every city… (1–2 min)';
     try { const { result } = await api('/sources/google/run', { method: 'POST' }); toast(result.skipped ? `Skipped: ${result.skipped}` : `Done: ${result.queries} searches · ${result.created} new events · ${result.merged} merged`); }

@@ -15,6 +15,7 @@ const planner = require('./server/planner');
 const { importFromUrl } = require('./server/importer');
 const payments = require('./server/payments');
 const google = require('./server/sources/google');
+const crawler = require('./server/crawler/crawler');
 const affiliate = require('./server/affiliate');
 const { istDayKey, addDaysKey, istHour, haversineKm } = require('./server/util');
 
@@ -91,6 +92,24 @@ async function refreshGoogle(force = false) {
   return r;
 }
 setTimeout(() => refreshGoogle().catch(e => console.error('Google refresh failed', e.message)), 3000).unref();
+
+// Own crawler: reads event pages from AllEvents, District, Eventbrite, Townscript, Luma, Unstop… (robots.txt-respecting).
+// On by default in production; CRAWLER=off disables, CRAWLER=on forces it locally.
+const CRAWLER_ON = process.env.CRAWLER === 'on' || (!DEMO && process.env.CRAWLER !== 'off');
+const CRAWL_EVERY_H = Number(process.env.CRAWL_INTERVAL_HOURS) || 12;
+async function runCrawler(force = false, only) {
+  if (!CRAWLER_ON && !force) return { skipped: 'crawler off' };
+  const last = db.crawl?.lastRun ? new Date(db.crawl.lastRun).getTime() : 0;
+  if (!force && Date.now() - last < CRAWL_EVERY_H * 3600000) return { skipped: 'fresh' };
+  const r = await crawler.run(db, ingest, { only });
+  store.save(db);
+  google.geocodePending(db).then(n => n && store.save(db)).catch(() => {});
+  return r;
+}
+if (CRAWLER_ON) {
+  setTimeout(() => runCrawler().catch(e => console.error('Crawler failed', e.message)), 20000).unref();
+  setInterval(() => runCrawler().catch(e => console.error('Crawler failed', e.message)), 3600000).unref();
+}
 setInterval(() => refreshGoogle().catch(e => console.error('Google refresh failed', e.message)), 6 * 3600000).unref();
 
 // ---------------------------------------------------------------- helpers
@@ -150,7 +169,7 @@ function eventFull(ev, viewer) {
   return {
     ...c, description: ev.description, organizer: ev.organizer, organizerUserId: ev.organizerUserId, tags: ev.tags,
     tiers: ev.tiers.map(t => ({ id: t.id, name: t.name, price: t.price, left: Math.max(0, t.capacity - t.sold), capacity: t.capacity })),
-    sourceDetails: ev.sources.map(s => ({ source: s.source, name: SOURCE_META[s.source]?.name || s.source, kind: SOURCE_META[s.source]?.kind, url: s.url, title: s.title, priceMin: s.priceMin })),
+    sourceDetails: ev.sources.map(s => ({ source: s.source, name: s.site || SOURCE_META[s.source]?.name || s.source, kind: s.site ? 'Read from the listing page by the Funillion crawler' : SOURCE_META[s.source]?.kind, url: s.url, title: s.title, priceMin: s.priceMin })),
     kmFromCentre: +haversineKm(ev, city).toFixed(1), cityName: city.name,
     links: (ev.links || []).map(l => ({ source: l.source, type: l.type, url: affiliate.wrap(l.url) })), address: ev.address || null, mapsUrl: ev.mapsUrl || null, allDay: !!ev.allDay,
     interestedCount: new Set(interested.map(i => i.userId)).size,
@@ -584,7 +603,16 @@ route('POST', '/api/organizer/events', ({ user, body }) => {
 });
 route('GET', '/api/aggregation', ({ user }) => {
   const g = google.enabled() ? { ...google.usage(db), limit: google.MONTHLY_LIMIT, refreshDays: google.REFRESH_DAYS, queriesPerCity: google.QUERIES.length, events: Object.values(db.events).filter(e => e.sources.some(s => s.source === 'google')).length } : null;
-  return { stats: db.meta.aggregation || null, google: g, sources: SOURCE_META, isAdmin: isAdmin(user), totalEvents: Object.keys(db.events).length, upcoming: feed.upcoming(db).length };
+  const cr = { on: CRAWLER_ON, running: crawler.isRunning(), lastRun: db.crawl?.lastRun || null, everyHours: CRAWL_EVERY_H, pagesRemembered: Object.keys(db.crawl?.seen || {}).length,
+    events: Object.values(db.events).filter(e => e.sources.some(s => s.source === 'crawl')).length,
+    sites: Object.values(db.crawl?.sites || {}).map(s => ({ id: s.site, name: s.name, pages: s.pages || 0, eventsFound: s.eventsFound || 0, created: s.created || 0, merged: s.merged || 0, updated: s.updated || 0, blockedByRobots: s.blockedByRobots || 0, httpErrors: s.httpErrors || 0, skipped: s.skipped || {}, errors: (s.errors || []).slice(0, 3), finishedAt: s.finishedAt || null })) };
+  return { stats: db.meta.aggregation || null, google: g, crawler: cr, sources: SOURCE_META, isAdmin: isAdmin(user), totalEvents: Object.keys(db.events).length, upcoming: feed.upcoming(db).length };
+});
+route('POST', '/api/crawler/run', async ({ user, body }) => {
+  if (!isAdmin(user)) fail(403, 'Only admins can run the crawler');
+  if (crawler.isRunning()) fail(409, 'Crawler is already running — check back in a few minutes');
+  runCrawler(true, Array.isArray(body.sites) ? body.sites : undefined).catch(e => console.error('Crawler failed', e.message)); // runs in background (several minutes)
+  return { started: true };
 });
 route('POST', '/api/sources/google/run', async ({ user }) => {
   if (!isAdmin(user)) fail(403, 'Only admins can pull new events');
@@ -665,6 +693,6 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   if (ALLOWED_HOSTS.size) console.log(`  Allowed frontend origins: ${[...ALLOWED_HOSTS].join(', ')}`);
   console.log(`\n  ✳ Funillion is live → http://localhost:${PORT}`);
-  console.log(DEMO ? `    Demo login: demo / funillion   ·   ${feed.upcoming(db).length} upcoming events across ${CITIES.length} cities\n` : `    Production mode · ${feed.upcoming(db).length} upcoming events · Google Events ${google.enabled() ? 'ON' : 'OFF (set SERPAPI_KEY)'} · Payments: ${payments.mode()}\n`);
+  console.log(DEMO ? `    Demo login: demo / funillion   ·   ${feed.upcoming(db).length} upcoming events across ${CITIES.length} cities\n` : `    Production mode · ${feed.upcoming(db).length} upcoming events · Google Events ${google.enabled() ? 'ON' : 'OFF'} · Crawler ${CRAWLER_ON ? 'ON' : 'OFF'} · Payments: ${payments.mode()}\n`);
 });
 process.on('SIGINT', () => { store.save(db, true); process.exit(0); });

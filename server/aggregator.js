@@ -16,6 +16,7 @@ const SOURCE_META = {
   meetlocal: { name: 'MeetLocal', kind: 'Community meetups', trust: 2 },
   organizer: { name: 'Organizer', kind: 'Submitted on Funillion', trust: 4 },
   import: { name: 'Web import', kind: 'Imported from organizer URL', trust: 2 },
+  crawl: { name: 'Web', kind: 'Found on the organiser / ticketing site by the Funillion crawler', trust: 3 },
   google: { name: 'Google Events', kind: 'Found via Google — BookMyShow, District, AllEvents & more', trust: 2 },
 };
 
@@ -136,8 +137,10 @@ function titleQuality(t) {
 
 function similarity(a, b) {
   const tSim = Math.max(jaccard(tokens(a.title), tokens(b.title)), trigramSim(a.title, b.title));
-  const minutes = Math.abs(new Date(a.start) - new Date(b.start)) / 60000;
-  const km = a.lat != null && b.lat != null ? haversineKm(a, b) : 99;
+  // a listing without a start time (all-day) can match any time on the same day
+  const minutes = a.allDay || b.allDay ? 0 : Math.abs(new Date(a.start) - new Date(b.start)) / 60000;
+  // approximate pins (city centre) can't be used to rule out a match
+  const km = a.approxLocation || b.approxLocation ? 0.5 : a.lat != null && b.lat != null ? haversineKm(a, b) : 99;
   const vSim = trigramSim(a.venue || '', b.venue || '');
   const sameCat = a.category === b.category ? 0.1 : 0;
   // weighted score, hard constraints on time + place
@@ -152,7 +155,12 @@ function recompute(ev) {
   const recs = ev.sources;
   const best = [...recs].sort((a, b) => titleQuality(b.title) - titleQuality(a.title))[0];
   ev.title = ev.lockedTitle || best.title;
-  if (!ev.lockedTime) { ev.start = best.start; ev.end = new Date(new Date(best.start).getTime() + best.durH * 3600000).toISOString(); ev.durH = best.durH; }
+  // time: prefer a source that actually states the start time
+  const timed = recs.find(r => !r.allDay && r === best) || recs.find(r => !r.allDay) || best;
+  if (!ev.lockedTime) { ev.start = timed.start; ev.end = new Date(new Date(timed.start).getTime() + timed.durH * 3600000).toISOString(); ev.durH = timed.durH; ev.allDay = recs.every(r => r.allDay); }
+  // location: prefer a source with a real venue pin
+  const pinned = recs.find(r => r.lat != null && !r.approxLocation);
+  if (pinned && ev.approxLocation) { ev.lat = pinned.lat; ev.lng = pinned.lng; ev.approxLocation = false; if (pinned.area) { ev.area = pinned.area; ev.zone = pinned.zone; } }
   ev.description = recs.map(r => r.description || '').sort((a, b) => b.length - a.length)[0] || ev.description;
   ev.image = ev.image || recs.find(r => r.image)?.image || null;
   ev.organizer = ev.organizer || best.organizer;
@@ -176,7 +184,7 @@ function newEventFromRecord(rec) {
 }
 
 function attach(ev, rec) {
-  const clean = { source: rec.source, sourceId: rec.sourceId, url: rec.url || null, title: rec.title, start: rec.start, durH: rec.durH, priceMin: rec.priceMin, description: rec.description, organizer: rec.organizer, image: rec.image, venue: rec.venue };
+  const clean = { source: rec.source, site: rec.site || null, allDay: !!rec.allDay, approxLocation: !!rec.approxLocation, sourceId: rec.sourceId, url: rec.url || null, title: rec.title, start: rec.start, durH: rec.durH, priceMin: rec.priceMin, description: rec.description, organizer: rec.organizer, image: rec.image, venue: rec.venue, lat: rec.approxLocation ? null : rec.lat, lng: rec.approxLocation ? null : rec.lng, area: rec.area?.name || null, zone: rec.area?.zone || null };
   const i = ev.sources.findIndex(s => s.source === rec.source && s.sourceId === rec.sourceId);
   if (i >= 0) ev.sources[i] = clean; else ev.sources.push(clean);
   // external booking links (BookMyShow, District…) from every source, de-duplicated
