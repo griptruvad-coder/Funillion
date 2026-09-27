@@ -1,0 +1,5 @@
+# Netlify serves the frontend from /public (no build step).
+# API calls are proxied to Railway via public/_redirects, so login cookies stay first-party.
+[build]
+  publish = "public"
+  command = ""

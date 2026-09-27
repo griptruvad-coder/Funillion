@@ -1,0 +1,2 @@
+# Replace the URL below with YOUR Railway domain (Railway → your service → Settings → Networking)
+/api/*  https://YOUR-APP.up.railway.app/api/:splat  200!
