@@ -119,15 +119,18 @@ function usage(db) {
   return db.meta.google;
 }
 
-async function search(q, extra = {}) {
+// Google removed the dedicated Events tab on 15 Sep 2026, so SerpApi's `google_events` engine may be gone.
+// Fallback: regular Google search, which can still carry an events carousel (events_results).
+async function search(q, engine = 'google_events', meta = {}) {
   const url = new URL(API);
-  url.search = new URLSearchParams({ engine: 'google_events', q, hl: 'en', gl: 'in', api_key: KEY, ...extra }).toString();
+  url.search = new URLSearchParams({ engine, q, hl: 'en', gl: 'in', google_domain: 'google.co.in', api_key: KEY }).toString();
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 25000);
   try {
     const res = await fetch(url, { signal: controller.signal });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.error) throw new Error(data.error || `SerpApi ${res.status}`);
-    return data.events_results || [];
+    meta.keys = Object.keys(data).filter(k => !['search_metadata', 'search_parameters', 'search_information'].includes(k)).slice(0, 25);
+    return data.events_results || data.event_results || [];
   } finally { clearTimeout(timer); }
 }
 
@@ -138,7 +141,7 @@ async function run(db, ingest, { force = false, log = console.log } = {}) {
   if (!enabled()) return { skipped: 'SERPAPI_KEY not set' };
   const u = usage(db);
   if (u.running) return { skipped: 'already running' };
-  if (!force && u.lastRun && Date.now() - new Date(u.lastRun).getTime() < REFRESH_DAYS * 86400000) return { skipped: 'fresh', lastRun: u.lastRun };
+  if (!force && u.lastRun && u.last?.queries > 0 && Date.now() - new Date(u.lastRun).getTime() < REFRESH_DAYS * 86400000) return { skipped: 'fresh', lastRun: u.lastRun };
   u.running = true;
   const stats = { startedAt: new Date().toISOString(), queries: 0, results: 0, created: 0, merged: 0, updated: 0, skipped: 0, errors: [] };
   const cities = CITIES.filter(c => !CITY_FILTER.length || CITY_FILTER.includes(c.id));
@@ -149,8 +152,23 @@ async function run(db, ingest, { force = false, log = console.log } = {}) {
         if (u.used >= MONTHLY_LIMIT) { stats.errors.push(`Monthly limit ${MONTHLY_LIMIT} reached — raise SERPAPI_MONTHLY_LIMIT on a paid plan`); break outer; }
         const q = tpl.replace('{city}', city.id === 'delhi' ? 'Delhi' : city.short);
         let items = [];
-        try { items = await search(q); u.used++; stats.queries++; }
-        catch (e) { stats.errors.push(`${q}: ${e.message}`); if (/invalid api key|run out of searches|account/i.test(e.message)) break outer; continue; }
+        const meta = {};
+        try { items = await search(q, u.engine || 'google_events', meta); u.used++; stats.queries++; }
+        catch (e) {
+          if (/unsupported/i.test(e.message) && (u.engine || 'google_events') === 'google_events') {
+            // switch engines once, then keep going with regular Google search
+            u.engine = 'google';
+            try { items = await search(q, 'google', meta); u.used++; stats.queries++; }
+            catch (e2) { stats.errors.push(`${q}: ${e2.message}`); break outer; }
+          } else { stats.errors.push(`${q}: ${e.message}`); if (/invalid api key|run out of searches|account|unsupported/i.test(e.message)) break outer; continue; }
+        }
+        stats.engine = u.engine || 'google_events';
+        if (!items.length) {
+          stats.empty = (stats.empty || 0) + 1;
+          stats.lastKeys = meta.keys;
+          // regular Google search with no events block → stop early instead of burning the monthly budget
+          if (stats.engine === 'google' && stats.queries >= 2 && !stats.results) { stats.errors.push(`Google search returned no events block (got: ${(meta.keys || []).join(', ')}). Google Events is no longer available — use another source.`); break outer; }
+        }
         for (const it of items) {
           stats.results++;
           const rec = toRecord(it, city, catHint(q), now);
