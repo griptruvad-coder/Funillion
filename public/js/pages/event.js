@@ -90,7 +90,7 @@ export async function render(el, id) {
     toast(interested ? 'Marked interested — your friends will see it' : 'Removed');
   };
   $('#share').onclick = async () => {
-    const url = location.href;
+    const url = e.seoUrl ? location.origin + e.seoUrl : location.href;
     try { if (navigator.share) await navigator.share({ title: e.title, url }); else { await navigator.clipboard.writeText(url); toast('Link copied'); } } catch {}
   };
   $('#group-plan').onclick = () => { if (requireAuth('Log in to plan with friends')) addToGroup(e); };

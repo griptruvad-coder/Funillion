@@ -598,6 +598,8 @@ dialog::backdrop{background:#10140fc0;backdrop-filter:blur(4px)}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
+.seo-links{max-width:1440px;margin:0 auto;padding:10px max(20px,4vw) 110px;font-size:12.5px;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 12px}
+.seo-links a{color:var(--muted)}
 /* listed (external) events */
 .ticket-box.external .ext-links{display:flex;flex-direction:column;gap:8px;margin-top:14px}
 .ticket-box.external .ext-links .btn{white-space:normal;text-align:center}

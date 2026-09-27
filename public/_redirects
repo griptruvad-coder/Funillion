@@ -1,2 +1,7 @@
-# Netlify → Railway API proxy (keeps login cookies first-party)
-/api/*  https://funillion-production.up.railway.app/api/:splat  200!
+# Netlify → Railway (keeps login cookies first-party; SEO pages are rendered by the server)
+/api/*        https://funillion-production.up.railway.app/api/:splat        200!
+/in/*         https://funillion-production.up.railway.app/in/:splat         200!
+/e/*          https://funillion-production.up.railway.app/e/:splat          200!
+/sitemap.xml  https://funillion-production.up.railway.app/sitemap.xml       200!
+/sitemaps/*   https://funillion-production.up.railway.app/sitemaps/:splat   200!
+/robots.txt   https://funillion-production.up.railway.app/robots.txt        200!

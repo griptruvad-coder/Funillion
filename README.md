@@ -80,6 +80,9 @@ On Railway, demo data is **off by default**: the first deploy removes all fake e
 
 Only facts + a link back are stored (no images or copied descriptions). BookMyShow is off by default because its terms restrict automated access. Admins see per-site stats and a **Run crawler now** button in Organizer → Smart aggregation.
 
+### SEO pages (Google traffic)
+The server renders crawlable HTML at clean URLs — `/in/delhi`, `/in/delhi/comedy-shows`, `/in/delhi/comedy-shows/this-weekend`, `/in/delhi/free`, `/e/<event-slug>-<id>` — with titles, descriptions, canonical URLs, Open Graph previews, schema.org `Event`/`ItemList`/`BreadcrumbList`, plus `/sitemap.xml` and `/robots.txt`. Pages with fewer than 2 events are `noindex`. Netlify proxies these paths to Railway (`public/_redirects`). Set `PUBLIC_URL` to your domain and submit `https://<domain>/sitemap.xml` in Google Search Console.
+
 ### Two kinds of events
 - **Listed** (from Google Events): Funillion shows facts + links; booking happens on BookMyShow/District/etc. ("Book on … ↗"). Add affiliate links with `AFFILIATE_TEMPLATES`.
 - **Ticketed on Funillion** (organisers who list with you): real checkout with Razorpay, QR e-tickets, refunds. Only these can be sold on Funillion.

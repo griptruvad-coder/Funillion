@@ -17,6 +17,7 @@ const payments = require('./server/payments');
 const google = require('./server/sources/google');
 const crawler = require('./server/crawler/crawler');
 const affiliate = require('./server/affiliate');
+const seo = require('./server/seo');
 const { istDayKey, addDaysKey, istHour, haversineKm } = require('./server/util');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -171,7 +172,7 @@ function eventFull(ev, viewer) {
     tiers: ev.tiers.map(t => ({ id: t.id, name: t.name, price: t.price, left: Math.max(0, t.capacity - t.sold), capacity: t.capacity })),
     sourceDetails: ev.sources.map(s => ({ source: s.source, name: s.site || SOURCE_META[s.source]?.name || s.source, kind: s.site ? 'Read from the listing page by the Funillion crawler' : SOURCE_META[s.source]?.kind, url: s.url, title: s.title, priceMin: s.priceMin })),
     kmFromCentre: +haversineKm(ev, city).toFixed(1), cityName: city.name,
-    links: (ev.links || []).map(l => ({ source: l.source, type: l.type, url: affiliate.wrap(l.url) })), address: ev.address || null, mapsUrl: ev.mapsUrl || null, allDay: !!ev.allDay,
+    seoUrl: seo.eventPath(ev), links: (ev.links || []).map(l => ({ source: l.source, type: l.type, url: affiliate.wrap(l.url) })), address: ev.address || null, mapsUrl: ev.mapsUrl || null, allDay: !!ev.allDay,
     interestedCount: new Set(interested.map(i => i.userId)).size,
     isInterested: viewer ? interested.some(i => i.userId === viewer.id) : false,
     similar,
@@ -666,7 +667,10 @@ function handleWebhook(req, res) {
 // ---------------------------------------------------------------- server
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  if (!url.pathname.startsWith('/api/')) return serveStatic(req, res, url.pathname);
+  if (!url.pathname.startsWith('/api/')) {
+    try { if (seo.handle(db, req, res, url)) return; } catch (e) { console.error('SEO page error', e); }
+    return serveStatic(req, res, url.pathname);
+  }
   res.setHeader('x-content-type-options', 'nosniff');
   if (url.pathname === '/api/razorpay/webhook' && req.method === 'POST') return handleWebhook(req, res);
   const r = routes.find(r => r.method === req.method && r.re.test(url.pathname));
