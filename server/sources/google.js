@@ -14,7 +14,8 @@ const CITY_FILTER = (process.env.SERPAPI_CITIES || '').split(',').map(s => s.tri
 
 const enabled = () => Boolean(KEY);
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-const MONTH_RE = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b/i;
+const MONTH_RE = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b/i;      // "Oct 3" (US)
+const DAY_MONTH_RE = /\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?/i; // "3 Oct" (India/UK)
 const TIME_RE = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i;
 
 // ---------- date parsing ("Sun, Dec 7, 8:00 – 9:30 PM IST", "Dec 2, 9:00 PM – Dec 30, 10:30 PM", "Today, 7 – 10 PM", "Oct 3 – 5")
@@ -31,6 +32,8 @@ function parseDatePart(part, fallback, now) {
   if (/\btomorrow\b/i.test(part)) { const x = new Date(Date.UTC(t.y, t.m - 1, t.d + 1)); return { y: x.getUTCFullYear(), m: x.getUTCMonth() + 1, d: x.getUTCDate(), rest: part.replace(/tomorrow/i, '') }; }
   const m = part.match(MONTH_RE);
   if (m) { const mo = MONTHS.indexOf(m[1].slice(0, 3).toLowerCase()) + 1; const d = +m[2]; return { y: pickYear(mo, d, now), m: mo, d, rest: part.replace(m[0], '') }; }
+  const dm = part.match(DAY_MONTH_RE);
+  if (dm) { const mo = MONTHS.indexOf(dm[2].slice(0, 3).toLowerCase()) + 1; const d = +dm[1]; return { y: pickYear(mo, d, now), m: mo, d, rest: part.replace(dm[0], '') }; }
   if (fallback) return { ...fallback, rest: part };
   return null;
 }
@@ -46,7 +49,7 @@ const to24 = ({ h, min, mer }) => ({ h: mer === 'pm' && h < 12 ? h + 12 : mer ==
 
 function parseWhen(date = {}, now = new Date()) {
   const when = String(date.when || date.start_date || '').replace(/\s+(IST|GMT[+\-]?[\d:]*|UTC[+\-]?[\d:]*|CST|CDT|EST|EDT|PST|PDT|MST|MDT|BST|CET|CEST|SGT|GST|AEST|JST)$/, '').trim();
-  const [startRaw, endRaw = ''] = when.split(/\s+[–—-]\s+/);
+  const [startRaw, endRaw = ''] = when.split(/\s*[–—]\s*|\s+-\s+/); // en/em dash with or without spaces
   const startDate = parseDatePart(startRaw, null, now) || (date.start_date ? parseDatePart(date.start_date, null, now) : null);
   if (!startDate) return null;
   let st = parseTime(startDate.rest);
@@ -172,7 +175,11 @@ async function run(db, ingest, { force = false, log = console.log } = {}) {
         for (const it of items) {
           stats.results++;
           const rec = toRecord(it, city, catHint(q), now);
-          if (!rec || new Date(rec.start) < Date.now() - 6 * 3600000) { stats.skipped++; continue; }
+          if (!rec || new Date(rec.start) < Date.now() - 6 * 3600000) {
+            stats.skipped++;
+            (stats.samples ||= []).length < 6 && stats.samples.push({ reason: !rec ? 'unparsed' : 'past', title: it?.title, date: it?.date, address: it?.address });
+            continue;
+          }
           const r = ingest(db, rec);
           stats[r.action] = (stats[r.action] || 0) + 1;
         }

@@ -81,6 +81,7 @@ function purgeDemo(db) {
   console.log(`› Demo data removed: ${deadEvents.size} fake events, ${deadUsers.size} demo people`);
 }
 
+if (db.meta.google) db.meta.google.running = false; // a run interrupted by a redeploy must not block future runs
 // Real events: Google Events via SerpApi, refreshed every SERPAPI_REFRESH_DAYS within the monthly budget
 async function refreshGoogle(force = false) {
   if (!google.enabled()) return { skipped: 'SERPAPI_KEY not set' };
