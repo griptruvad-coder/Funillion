@@ -72,7 +72,7 @@ export function card(e, opts = {}) {
         <span class="date-badge">${monthShort(e.start)}<b>${dayNum(e.start)}</b></span>
         ${hot ? '<span class="hot-badge">🔥 Selling fast</span>' : e.soldOut ? '<span class="hot-badge sold">Sold out</span>' : ''}
       </div>
-      <div class="card-meta"><span>${c.icon} ${esc(c.label.toUpperCase())}</span><span>${relDay(e.start)} · ${fmtTime(e.start)}</span></div>
+      <div class="card-meta"><span>${c.icon} ${esc(c.label.toUpperCase())}</span><span>${relDay(e.start)}${e.allDay ? '' : ` · ${fmtTime(e.start)}`}</span></div>
       <h3>${esc(e.title)}</h3>
       <p class="venue">⌖ ${esc(place(e))}</p>
       ${reasons}${friends}

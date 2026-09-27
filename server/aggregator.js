@@ -69,15 +69,16 @@ const CATEGORY_RULES = [
   ['food', /food|tasting|beer|biryani|chef|coffee|thali|market morning|crawl|bite of/i],
   ['arts', /art|heritage|exhibition|museum|gallery|kathak|dance recital|zine/i],
   ['meetups', /meetup|meet\b|club|social|community|book|board games|exchange/i],
-  ['music', /concert|live|music|band|jazz|sufi|ghazal|unplugged|rock|hip-hop|bass|sound/i],
+  ['music', /concert|live|music|band|jazz|sufi|ghazal|unplugged|rock|hip-hop|bass|sound|candlelight|orchestra|symphony|tribute|qawwali|dj night|gig/i],
 ];
 // every keyword must start at a word boundary ("rave" must not match "travellers")
 const BOUNDED_RULES = CATEGORY_RULES.map(([cat, re]) => [cat, new RegExp(`\\b(?:${re.source})`, 'i')]);
-function inferCategory(...texts) {
+function matchCategory(...texts) {
   const joined = texts.filter(Boolean).join(' | ');
   for (const [cat, re] of BOUNDED_RULES) if (re.test(joined)) return cat;
-  return 'meetups';
+  return null;
 }
+const inferCategory = (...texts) => matchCategory(...texts) || 'meetups';
 
 // ---------- adapters: raw source row -> normalised record ----------
 const adapters = {
@@ -262,4 +263,4 @@ function runAggregation(db) {
   return stats;
 }
 
-module.exports = { runAggregation, ingest, resolveCity, resolveArea, inferCategory, SOURCE_META, similarity, buildBlockIndex };
+module.exports = { runAggregation, ingest, resolveCity, resolveArea, inferCategory, matchCategory, SOURCE_META, similarity, buildBlockIndex };

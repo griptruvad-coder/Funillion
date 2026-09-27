@@ -2,7 +2,7 @@
 // Google already aggregates BookMyShow, District, AllEvents, Insider, Luma, Townscript… into its Events cards,
 // so one query per city/category brings in listings from every platform. We store facts + links only.
 const { CITIES } = require('../catalog');
-const { resolveCity, inferCategory } = require('../aggregator');
+const { resolveCity, matchCategory } = require('../aggregator');
 const { istISO, istDateParts, haversineKm } = require('../util');
 
 const KEY = process.env.SERPAPI_KEY || '';
@@ -48,6 +48,8 @@ function parseTime(str) {
 const to24 = ({ h, min, mer }) => ({ h: mer === 'pm' && h < 12 ? h + 12 : mer === 'am' && h === 12 ? 0 : h, min });
 
 function parseWhen(date = {}, now = new Date()) {
+  if (typeof date === 'string') date = { when: date }; // regular Google search gives "9 Oct"; the old Events engine gave { when, start_date }
+  if (!date) return null;
   const when = String(date.when || date.start_date || '').replace(/\s+(IST|GMT[+\-]?[\d:]*|UTC[+\-]?[\d:]*|CST|CDT|EST|EDT|PST|PDT|MST|MDT|BST|CET|CEST|SGT|GST|AEST|JST)$/, '').trim();
   const [startRaw, endRaw = ''] = when.split(/\s*[–—]\s*|\s+-\s+/); // en/em dash with or without spaces
   const startDate = parseDatePart(startRaw, null, now) || (date.start_date ? parseDatePart(date.start_date, null, now) : null);
@@ -61,12 +63,12 @@ function parseWhen(date = {}, now = new Date()) {
   if (st && !st.mer && et?.mer) { st.mer = et.mer; if (et.mer === 'pm' && st.h > et.h && st.h < 12) st.mer = 'am'; }
   if (st && !st.mer) st.mer = st.h < 8 ? 'pm' : st.h < 12 ? 'am' : null;
   const allDay = !st;
-  const s = st ? to24(st) : { h: 10, min: 0 };
+  const s = st ? to24(st) : { h: 10, min: 0 }; // no time on the listing → treat as all day
   const start = istISO(startDate.y, startDate.m, startDate.d, s.h, s.min);
   let end;
   if (et) { const e = to24(et); end = istISO(endDate.y, endDate.m, endDate.d, e.h, e.min); if (new Date(end) <= new Date(start)) end = new Date(new Date(end).getTime() + 86400000).toISOString(); }
   else if (endDate && (endDate.d !== startDate.d || endDate.m !== startDate.m)) end = istISO(endDate.y, endDate.m, endDate.d, 20, 0);
-  else end = new Date(new Date(start).getTime() + (allDay ? 8 : 3) * 3600000).toISOString();
+  else end = allDay ? istISO(startDate.y, startDate.m, startDate.d, 23, 30) : new Date(new Date(start).getTime() + 3 * 3600000).toISOString();
   return { start, end, durH: Math.max(0.5, Math.round((new Date(end) - new Date(start)) / 360000) / 10), allDay };
 }
 
@@ -98,13 +100,14 @@ function toRecord(item, queryCity, queryCat, now) {
   const area = areaFromText(city, addrText);
   const links = (item.ticket_info || []).filter(t => /^https?:\/\//.test(t.link || '')).map(t => ({ source: String(t.source || '').slice(0, 40), url: t.link, type: t.link_type === 'tickets' ? 'tickets' : 'info' }));
   if (item.link && !links.some(l => l.url === item.link)) links.push({ source: 'Google', url: item.link, type: 'info' });
+  if (!links.length) links.push({ source: 'Google', url: `https://www.google.com/search?q=${encodeURIComponent(`${item.title} ${address[0] || ''} tickets`)}`, type: 'info' });
   const desc = String(item.description || '').replace(/\s+/g, ' ').trim();
   const price = desc.match(/(?:₹|rs\.?|inr)\s?([\d,]{2,7})/i);
   const free = /\bfree (entry|event|admission)\b|\bentry free\b/i.test(desc + ' ' + item.title);
   const id = require('crypto').createHash('sha1').update(`${item.title}|${when.start}|${venue}`).digest('hex').slice(0, 14);
   return {
     source: 'google', sourceId: id, url: links.find(l => l.type === 'tickets')?.url || item.link || null,
-    title: String(item.title).slice(0, 140), category: inferCategory(item.title, desc, queryCat),
+    title: String(item.title).slice(0, 140), category: matchCategory(item.title, desc) || matchCategory(venue, addrText) || matchCategory(queryCat) || 'arts',
     city: city.id, area: area || { name: address[1]?.split(',')[0] || city.short, zone: null, lat: city.lat, lng: city.lng, approx: true },
     venue, address: addrText.slice(0, 200), lat: area ? area.lat + (Math.random() - 0.5) * 0.006 : city.lat, lng: area ? area.lng + (Math.random() - 0.5) * 0.006 : city.lng,
     approxLocation: true, start: when.start, durH: when.durH, allDay: when.allDay,
@@ -175,7 +178,7 @@ async function run(db, ingest, { force = false, log = console.log } = {}) {
         for (const it of items) {
           stats.results++;
           const rec = toRecord(it, city, catHint(q), now);
-          if (!rec || new Date(rec.start) < Date.now() - 6 * 3600000) {
+          if (!rec || new Date(rec.start).getTime() + rec.durH * 3600000 < Date.now()) {
             stats.skipped++;
             (stats.samples ||= []).length < 6 && stats.samples.push({ reason: !rec ? 'unparsed' : 'past', title: it?.title, date: it?.date, address: it?.address });
             continue;

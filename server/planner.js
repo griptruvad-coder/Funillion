@@ -187,6 +187,7 @@ function optimize(db, user, c) {
     if (h < from || h >= to) return false;
     if (new Date(e.start) < Date.now() - 15 * 60000) return false;
     if (c.exclude.includes(e.category)) return false;
+    if (e.allDay) return false; // listing has no start time — can't place it in an itinerary
     if (e.durH > 8 && !c.categories.includes(e.category)) return false; // skip 24h hackathons unless asked
     if (useZone && c.zone && e.zone !== c.zone) return false;
     if (!cheapestTier(e, c.people)) return false;

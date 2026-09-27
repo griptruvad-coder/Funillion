@@ -119,7 +119,7 @@ function card(db, ev, viewer, friendsMap) {
     fill: +fillRatio(ev).toFixed(2), soldOut: isSoldOut(ev), funScore: funScore(ev),
     sources: [...new Set(ev.sources.map(s => SOURCE_META[s.source]?.name || s.source))],
     ticketing: ev.ticketing || 'funillion', bookingSource: ev.ticketing === 'external' ? (ev.links || []).find(l => l.type === 'tickets')?.source || (ev.links || [])[0]?.source || null : null,
-    approxLocation: ev.approxLocation === true || ev.approxLocation === 'failed',
+    approxLocation: ev.approxLocation === true || ev.approxLocation === 'failed', allDay: !!ev.allDay,
     saved: viewer ? (db.saves[viewer.id] || []).includes(ev.id) : false,
     friends: fr, friendCount: f ? f.size : 0,
   };

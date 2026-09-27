@@ -22,7 +22,7 @@ export async function render(el, id) {
         <p class="muted">${e.organizer ? `by ${esc(e.organizer)}` : ext && e.bookingSource ? `Listed on ${esc(e.bookingSource)}` : ''}</p>
       </div>
       <div class="facts">
-        <div><span>◷</span><div><b>${['Today', 'Tomorrow'].includes(relDay(e.start)) ? relDay(e.start) + ' · ' : ''}${fmtDayLong(e.start)}</b><small>${fmtTime(e.start)} – ${fmtTime(end)}${dayKey(end) !== dayKey(e.start) ? ' (next day)' : ''} · ${e.durH >= 20 ? Math.round(e.durH) + ' hours' : e.durH + (e.durH === 1 ? ' hr' : ' hrs')}</small></div></div>
+        <div><span>◷</span><div><b>${['Today', 'Tomorrow'].includes(relDay(e.start)) ? relDay(e.start) + ' · ' : ''}${fmtDayLong(e.start)}</b><small>${e.allDay ? 'Timing on the listing' : `${fmtTime(e.start)} – ${fmtTime(end)}${dayKey(end) !== dayKey(e.start) ? ' (next day)' : ''} · ${e.durH >= 20 ? Math.round(e.durH) + ' hours' : e.durH + (e.durH === 1 ? ' hr' : ' hrs')}`}</small></div></div>
         <div><span>⌖</span><div><b>${esc(e.venue)}</b><small>${e.address ? esc(e.address) : `${esc(e.area)}, ${esc(e.cityName)}`}${e.approxLocation ? '' : ` · ${e.kmFromCentre} km from city centre`}</small></div></div>
         <div><span>₹</span><div><b>${e.priceMin === 0 ? 'Free entry available' : priceLabel(e)}</b><small>${ext ? `Book on ${esc(e.bookingSource || 'the organiser\'s site')}` : `${e.tiers.length} ticket type${e.tiers.length > 1 ? 's' : ''} · instant e-ticket`}</small></div></div>
       </div>
