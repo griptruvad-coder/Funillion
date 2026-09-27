@@ -61,7 +61,7 @@ function personalScore(ev, ctx) {
   if (nFriends) reasons.push(`${nFriends} friend${nFriends > 1 ? 's' : ''} interested`);
   if (ctx.user?.interests?.includes(ev.category)) reasons.push(`You like ${catLabel[ev.category]}`);
   else if (aff > 0.5) reasons.push(`Based on your activity in ${catLabel[ev.category]}`);
-  if (pop > 0.7) reasons.push(`Trending in ${CITIES.find(c => c.id === ev.city)?.short}`);
+  if (pop > 0.7) reasons.push(ev.online ? 'Trending online' : `Trending in ${CITIES.find(c => c.id === ev.city)?.short}`);
   if (hoursAway >= 0 && hoursAway < 30) reasons.push('Happening soon');
   if (ev.priceMin === 0) reasons.push('Free');
   return { score, reasons };
@@ -70,7 +70,7 @@ function personalScore(ev, ctx) {
 function forYou(db, user, cityId, limit = 12) {
   const ctx = { user, aff: affinity(db, user), friends: friendSignals(db, user) };
   const booked = new Set(Object.values(db.bookings).filter(b => b.userId === user.id && b.status === 'confirmed').map(b => b.eventId));
-  const pool = upcoming(db, cityId).filter(e => !booked.has(e.id) && !isSoldOut(e)).map(e => ({ e, ...personalScore(e, ctx) }));
+  const pool = upcoming(db, cityId).filter(e => !booked.has(e.id) && !isSoldOut(e) && (!e.online || ctx.aff[e.category] >= 0.3)).map(e => ({ e, ...personalScore(e, ctx) }));
   // MMR-style diversity: penalise repeating the same category
   const picked = [], catCount = {};
   while (picked.length < limit && pool.length) {
@@ -83,9 +83,10 @@ function forYou(db, user, cityId, limit = 12) {
   return picked;
 }
 
-function upcoming(db, cityId) {
+// cityId: that city's events plus online ones (online hackathons are open to everyone); { online: false } = in-person only
+function upcoming(db, cityId, { online = true } = {}) {
   const now = Date.now();
-  return Object.values(db.events).filter(e => e.status === 'live' && (!cityId || e.city === cityId) && new Date(e.end || e.start).getTime() > now && (new Date(e.start).getTime() > now - 2 * 3600000 || e.durH >= 20));
+  return Object.values(db.events).filter(e => e.status === 'live' && (!cityId || e.city === cityId || (online && e.online)) && (online || !e.online) && new Date(e.end || e.start).getTime() > now && (new Date(e.start).getTime() > now - 2 * 3600000 || e.durH >= 20));
 }
 
 function weekendKeys() {
@@ -97,7 +98,7 @@ function weekendKeys() {
 }
 
 function trending(db, cityId) {
-  const list = upcoming(db, cityId);
+  const list = upcoming(db, cityId, { online: false });
   const today = istDayKey(new Date()), tomorrow = addDaysKey(today, 1);
   const wk = new Set(weekendKeys());
   const byPop = arr => arr.sort((a, b) => popularity(b) - popularity(a));
@@ -119,7 +120,8 @@ function card(db, ev, viewer, friendsMap) {
     fill: +fillRatio(ev).toFixed(2), soldOut: isSoldOut(ev), funScore: funScore(ev),
     sources: [...new Set(ev.sources.map(s => s.site || SOURCE_META[s.source]?.name || s.source))],
     ticketing: ev.ticketing || 'funillion', bookingSource: ev.ticketing === 'external' ? (ev.links || []).find(l => l.type === 'tickets')?.source || (ev.links || [])[0]?.source || null : null,
-    approxLocation: ev.approxLocation === true || ev.approxLocation === 'failed', allDay: !!ev.allDay,
+    approxLocation: ev.approxLocation === true || ev.approxLocation === 'failed', allDay: !!ev.allDay, online: !!ev.online,
+    hack: ev.hack ? { mode: ev.hack.mode, deadline: ev.hack.deadline, prize: ev.hack.prize } : null,
     saved: viewer ? (db.saves[viewer.id] || []).includes(ev.id) : false,
     friends: fr, friendCount: f ? f.size : 0,
   };

@@ -30,11 +30,11 @@ async function aggregation(box) {
     </div>
     <div class="admin-card crawler-card">
       <div style="flex:1;min-width:260px"><p class="eyebrow">🕷 FUNILLION CRAWLER</p>
-        <p class="muted small">Reads event pages on AllEvents, District, Eventbrite, Townscript, Luma, Unstop & Devfolio for all cities — free, no API credits. Follows each site's robots.txt, one polite request at a time, and links back to the original page. ${cr.on ? `Runs every ${cr.everyHours} h.` : 'Off (set CRAWLER=on).'}</p></div>
-      <div class="kv"><div><b>${cr.events}</b><span>events found by crawler</span></div><div><b>${cr.lastRun ? timeAgo(cr.lastRun) : '—'}</b><span>last run</span></div><div><b>${cr.pagesRemembered}</b><span>pages remembered</span></div></div>
+        <p class="muted small">Reads event pages on AllEvents, District, Eventbrite, Townscript & Luma for all cities, plus hackathons from Devpost, Unstop, Devfolio, HackerEarth & Hack2Skill (online ones too) — free, no API credits. Follows each site's robots.txt, one polite request at a time, and links back to the original page. ${cr.on ? `Runs every ${cr.everyHours} h.` : 'Off (set CRAWLER=on).'}</p></div>
+      <div class="kv"><div><b>${cr.events}</b><span>events found by crawler</span></div><div><b>${cr.lastRun ? timeAgo(cr.lastRun) : '—'}</b><span>last run</span></div><div><b>${cr.pagesRemembered}</b><span>pages remembered</span></div><div><b>${cr.hackathons ?? 0}</b><span>hackathons (${cr.onlineHackathons ?? 0} online)</span></div></div>
       ${isAdmin ? `<button class="btn dark" id="run-crawler" ${cr.running ? 'disabled' : ''}>${cr.running ? '🕷 Crawling… (refresh in a few min)' : '🕷 Run crawler now'}</button>` : ''}
       ${cr.sites.length ? `<div class="table-wrap" style="flex-basis:100%"><table class="tbl"><thead><tr><th>Site</th><th>Pages read</th><th>Events seen</th><th>New</th><th>Merged</th><th>Blocked by robots</th><th>Notes</th></tr></thead><tbody>
-        ${cr.sites.map(x => `<tr><td><b>${esc(x.name)}</b></td><td>${x.pages}</td><td>${x.eventsFound}</td><td>${x.created}</td><td>${x.merged + x.updated}</td><td>${x.blockedByRobots}</td><td class="small">${esc([...Object.entries(x.skipped).map(([k, v]) => `${v} ${k}`), ...x.errors].join(' · ').slice(0, 160))}</td></tr>`).join('')}
+        ${cr.sites.map(x => `<tr><td><b>${esc(x.name)}</b>${x.kind === 'api' ? ' <small class="muted">JSON</small>' : ''}</td><td>${x.pages}</td><td>${x.eventsFound}</td><td>${x.created}${x.online ? ` <small class="muted">(${x.online} online)</small>` : ''}</td><td>${x.merged + x.updated}</td><td>${x.blockedByRobots}</td><td class="small">${esc([...Object.entries(x.skipped).map(([k, v]) => `${v} ${k}`), ...x.errors].join(' · ').slice(0, 160))}</td></tr>`).join('')}
       </tbody></table></div>` : ''}
     </div>
     <p class="muted small">${upcoming.toLocaleString('en-IN')} upcoming events live · ${totalEvents.toLocaleString('en-IN')} in the database</p>

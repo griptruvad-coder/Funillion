@@ -1,7 +1,9 @@
 const crypto = require('crypto');
 const { CITIES, CATEGORIES } = require('./catalog');
 
-const SESSION_DAYS = 30;
+// stay logged in for 90 days; every visit after a week pushes it forward again (rolling), so active users never get logged out
+const SESSION_DAYS = Number(process.env.SESSION_DAYS) || 90;
+const RENEW_AFTER_MS = 7 * 86400000;
 const cityIds = new Set(CITIES.map(c => c.id));
 const catIds = new Set(CATEGORIES.map(c => c.id));
 
@@ -52,7 +54,9 @@ function userFromRequest(db, req) {
   if (!m) return null;
   const s = db.sessions[m[1]];
   if (!s || s.exp < Date.now()) { if (s) delete db.sessions[m[1]]; return null; }
-  return db.users[s.userId] || null;
+  const u = db.users[s.userId] || null;
+  if (u && s.exp - Date.now() < SESSION_DAYS * 86400000 - RENEW_AFTER_MS) { s.exp = Date.now() + SESSION_DAYS * 86400000; req.renewedSession = m[1]; }
+  return u;
 }
 
 // Secure cookies in production (HTTPS). Locally over http://localhost they must stay non-Secure.

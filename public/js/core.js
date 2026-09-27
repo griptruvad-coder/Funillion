@@ -55,11 +55,17 @@ export function poster(e, cls = '') {
 
 // "Cyber Hub" + "Cyber Hub, Gurugram" → "Cyber Hub, Gurugram" (no repeated names)
 export function place(e) {
+  if (e.online) return '🌐 Online · join from anywhere';
   const v = String(e.venue || ''), a = String(e.area || '');
   if (!a || v.toLowerCase().includes(a.split(',')[0].toLowerCase())) return v || a;
   if (a.toLowerCase().includes(v.toLowerCase())) return a;
   return `${v}, ${a}`;
 }
+const hackLine = e => {
+  const h = e.hack; if (!h) return '';
+  const bits = [h.prize && `🏆 ${esc(String(h.prize).slice(0, 28))}`, h.deadline && new Date(h.deadline) > Date.now() && `⏳ Register by ${esc(fmtDay(h.deadline).replace(/^\w+, /, ''))}`].filter(Boolean);
+  return bits.length ? `<p class="hack-line">${bits.join(' · ')}</p>` : '';
+};
 export function card(e, opts = {}) {
   const c = cat(e.category);
   const hot = !e.soldOut && e.fill >= 0.85;
@@ -74,9 +80,10 @@ export function card(e, opts = {}) {
       </div>
       <div class="card-meta"><span>${c.icon} ${esc(c.label.toUpperCase())}</span><span>${relDay(e.start)}${e.allDay ? '' : ` · ${fmtTime(e.start)}`}</span></div>
       <h3>${esc(e.title)}</h3>
-      <p class="venue">⌖ ${esc(place(e))}</p>
+      <p class="venue">${e.online ? '' : '⌖ '}${esc(place(e))}</p>
+      ${hackLine(e)}
       ${reasons}${friends}
-      <div class="card-bottom"><strong>${priceLabel(e)}</strong><span>${e.ticketing === 'external' && e.bookingSource ? `on ${esc(e.bookingSource)} ↗` : e.sources.length > 1 ? `✳ ${e.sources.length} platforms` : 'View ↗'}</span></div>
+      <div class="card-bottom"><strong>${priceLabel(e)}</strong><span>${e.ticketing === 'external' && e.bookingSource ? `${e.category === 'hackathons' ? 'Register on' : 'on'} ${esc(e.bookingSource)} ↗` : e.sources.length > 1 ? `✳ ${e.sources.length} platforms` : 'View ↗'}</span></div>
     </a>
     <button class="bookmark ${e.saved ? 'is-saved' : ''}" data-save="${esc(e.id)}" aria-pressed="${e.saved}" aria-label="${e.saved ? 'Unsave' : 'Save'} ${esc(e.title)}">${e.saved ? '♥' : '♡'}</button>
   </article>`;
@@ -106,6 +113,12 @@ export function requireAuth(reason = 'Log in to continue') {
   if (state.user) return true;
   openAuth('signup', reason);
   return false;
+}
+
+// ask the browser's password manager (Chrome, Edge, Android, iCloud Keychain…) to save the login.
+// The password never touches Funillion's storage — it stays in the user's own browser/Google/Apple password manager.
+function savePassword(id, password, name) {
+  try { if (window.PasswordCredential && id && password) navigator.credentials.store(new PasswordCredential({ id, password, name: name || id })).catch(() => {}); } catch {}
 }
 
 export function openAuth(mode = 'login', reason = '') {
@@ -153,7 +166,7 @@ export function openAuth(mode = 'login', reason = '') {
     $('#login-form', content)?.addEventListener('submit', async ev => {
       ev.preventDefault();
       const fd = Object.fromEntries(new FormData(ev.target));
-      try { const { user } = await api('/auth/login', { method: 'POST', body: fd }); onLoggedIn(user); } catch (e) { err(e.message); }
+      try { const { user } = await api('/auth/login', { method: 'POST', body: fd }); savePassword(fd.login, fd.password); onLoggedIn(user); } catch (e) { err(e.message); }
     });
     $('#demo-login', content)?.addEventListener('click', async () => { const { user } = await api('/auth/demo', { method: 'POST' }); onLoggedIn(user); });
     $('#signup-form', content)?.addEventListener('submit', ev => { ev.preventDefault(); Object.assign(form, Object.fromEntries(new FormData(ev.target))); render('city'); });
@@ -161,7 +174,7 @@ export function openAuth(mode = 'login', reason = '') {
     $('#city-next', content)?.addEventListener('click', () => render('interests'));
     $$('[data-int]', content).forEach(b => b.onclick = () => { const i = b.dataset.int; form.interests = form.interests.includes(i) ? form.interests.filter(x => x !== i) : [...form.interests, i]; b.classList.toggle('selected'); });
     $('#finish', content)?.addEventListener('click', async () => {
-      try { const { user } = await api('/auth/signup', { method: 'POST', body: form }); onLoggedIn(user, true); }
+      try { const { user } = await api('/auth/signup', { method: 'POST', body: form }); savePassword(form.username || form.email, form.password, form.name); onLoggedIn(user, true); }
       catch (e) { if (e.status === 409 || /username|email|password|name/i.test(e.message)) { render('details'); setTimeout(() => err(e.message)); } else err(e.message); }
     });
   };

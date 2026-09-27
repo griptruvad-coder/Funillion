@@ -63,8 +63,21 @@ function toRecord(ev, pageUrl, site) {
   if (/Cancelled|Postponed/i.test(status)) return { skip: 'cancelled' };
   const loc = first(ev.location) || {};
   const online = /Online/i.test(String(ev.eventAttendanceMode || '')) || /VirtualLocation/.test(typeOf(loc));
-  if (online && !/Mixed/i.test(String(ev.eventAttendanceMode || ''))) return { skip: 'online' };
+  const onlineOnly = online && !/Mixed/i.test(String(ev.eventAttendanceMode || ''));
+  // online events: only hackathons are kept (webinars would flood every city's feed)
+  if (onlineOnly && matchCategory(decode(ev.name), decode(ev.description)) !== 'hackathons') return { skip: 'online' };
   const start = parseDate(ev.startDate); if (!start) return { skip: 'no date' };
+  if (onlineOnly) {
+    const url = (typeof ev.url === 'string' && /^https?:/.test(ev.url) ? ev.url : null) || pageUrl;
+    const endP = ev.endDate ? parseDate(ev.endDate) : null;
+    let durH = endP ? (new Date(endP.iso) - new Date(start.iso)) / 3600000 : 24;
+    if (!(durH > 0) || durH > 24 * 90) durH = 24;
+    const title = decode(ev.name).slice(0, 140);
+    return { record: { source: 'crawl', site: site.name, sourceId: require('crypto').createHash('sha1').update(url.split('#')[0].replace(/\?.*$/, '') + (ev.url ? '' : `|${title}|${start.iso}`)).digest('hex').slice(0, 16),
+      url, title, category: 'hackathons', city: 'online', online: true, area: { name: 'Online', zone: null }, venue: 'Online', address: '', lat: null, lng: null, approxLocation: false,
+      start: start.iso, durH: Math.round(durH * 10) / 10, allDay: start.allDay, tiers: [], priceMin: null, description: decode(ev.description).slice(0, 300), organizer: decode(first(ev.organizer)?.name) || null, image: null, external: true,
+      hack: { mode: 'online', platform: site.name }, links: [{ source: site.name, url, type: 'tickets' }] } };
+  }
   const endP = ev.endDate ? parseDate(ev.endDate) : null;
   const addr = typeof loc.address === 'string' ? { streetAddress: loc.address } : (first(loc.address) || {});
   const addrText = decode([addr.streetAddress, addr.addressLocality, addr.addressRegion].filter(Boolean).join(', '));

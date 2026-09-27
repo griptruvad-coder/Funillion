@@ -94,7 +94,7 @@ async function refreshGoogle(force = false) {
 }
 setTimeout(() => refreshGoogle().catch(e => console.error('Google refresh failed', e.message)), 3000).unref();
 
-// Own crawler: reads event pages from AllEvents, District, Eventbrite, Townscript, Luma, Unstop… (robots.txt-respecting).
+// Own crawler: reads event pages from AllEvents, District, Eventbrite, Townscript, Luma + hackathon platforms (Devpost, Unstop, Devfolio, HackerEarth, Hack2Skill) (robots.txt-respecting).
 // On by default in production; CRAWLER=off disables, CRAWLER=on forces it locally.
 const CRAWLER_ON = process.env.CRAWLER === 'on' || (!DEMO && process.env.CRAWLER !== 'off');
 const CRAWL_EVERY_H = Number(process.env.CRAWL_INTERVAL_HOURS) || 12;
@@ -171,7 +171,7 @@ function eventFull(ev, viewer) {
     ...c, description: ev.description, organizer: ev.organizer, organizerUserId: ev.organizerUserId, tags: ev.tags,
     tiers: ev.tiers.map(t => ({ id: t.id, name: t.name, price: t.price, left: Math.max(0, t.capacity - t.sold), capacity: t.capacity })),
     sourceDetails: ev.sources.map(s => ({ source: s.source, name: s.site || SOURCE_META[s.source]?.name || s.source, kind: s.site ? 'Read from the listing page by the Funillion crawler' : SOURCE_META[s.source]?.kind, url: s.url, title: s.title, priceMin: s.priceMin })),
-    kmFromCentre: +haversineKm(ev, city).toFixed(1), cityName: city.name,
+    kmFromCentre: city && ev.lat != null ? +haversineKm(ev, city).toFixed(1) : null, cityName: city ? city.name : 'Online', hack: ev.hack || null,
     seoUrl: seo.eventPath(ev), links: (ev.links || []).map(l => ({ source: l.source, type: l.type, url: affiliate.wrap(l.url) })), address: ev.address || null, mapsUrl: ev.mapsUrl || null, allDay: !!ev.allDay,
     interestedCount: new Set(interested.map(i => i.userId)).size,
     isInterested: viewer ? interested.some(i => i.userId === viewer.id) : false,
@@ -187,9 +187,11 @@ function filterEvents(qs, viewer) {
   const price = qs.get('price') || 'all';
   const zone = qs.get('zone') || '';
   const sort = qs.get('sort') || 'recommended';
+  const mode = qs.get('mode') || ''; // 'online' | 'offline' | '' (both)
   const today = istDayKey(new Date());
   const wk = new Set(feed.weekendKeys());
-  let list = feed.upcoming(db, city === 'all' ? null : city).filter(e => {
+  let list = feed.upcoming(db, city === 'all' ? null : city, { online: mode !== 'offline' }).filter(e => {
+    if (mode === 'online' && !e.online) return false;
     if (cat !== 'all' && e.category !== cat) return false;
     if (zone && e.zone !== zone) return false;
     const day = istDayKey(e.start);
@@ -262,7 +264,7 @@ const route = (method, pattern, handler) => {
 };
 
 route('GET', '/api/health', () => ({ ok: true, events: feed.upcoming(db).length, users: Object.keys(db.users).length }));
-route('GET', '/api/meta', () => ({ cities: CITIES.map(({ id, name, short, state, lat, lng, areas }) => ({ id, name, short, state, lat, lng, areas: areas.map(a => ({ name: a.name, zone: a.zone })), count: feed.upcoming(db, id).length })), categories: CATEGORIES, sources: SOURCE_META, totals: { events: feed.upcoming(db).length, cities: CITIES.length }, payments: payments.publicConfig(), demo: DEMO, realEvents: google.enabled() }));
+route('GET', '/api/meta', () => ({ cities: CITIES.map(({ id, name, short, state, lat, lng, areas }) => ({ id, name, short, state, lat, lng, areas: areas.map(a => ({ name: a.name, zone: a.zone })), count: feed.upcoming(db, id, { online: false }).length })), categories: CATEGORIES, sources: SOURCE_META, totals: { events: feed.upcoming(db).length, cities: CITIES.length, online: feed.upcoming(db, 'online').length }, payments: payments.publicConfig(), demo: DEMO, realEvents: google.enabled() }));
 
 // auth
 route('GET', '/api/me', ({ user }) => ({ user: user ? { ...auth.publicUser(user, user), isAdmin: isAdmin(user) } : null, demo: DEMO }));
@@ -321,6 +323,7 @@ route('GET', '/api/events', ({ user, qs }) => {
   return { total: list.length, items: list.slice(offset, offset + limit).map(e => feed.card(db, e, user, friendsMap)) };
 });
 route('GET', '/api/map', ({ user, qs }) => {
+  qs.set('mode', 'offline'); // online events have no place on a map
   const list = filterEvents(qs, user);
   const friendsMap = user ? feed.friendSignals(db, user) : null;
   return { items: list.slice(0, 400).map(e => feed.card(db, e, user, friendsMap)) };
@@ -606,7 +609,8 @@ route('GET', '/api/aggregation', ({ user }) => {
   const g = google.enabled() ? { ...google.usage(db), limit: google.MONTHLY_LIMIT, refreshDays: google.REFRESH_DAYS, queriesPerCity: google.QUERIES.length, events: Object.values(db.events).filter(e => e.sources.some(s => s.source === 'google')).length } : null;
   const cr = { on: CRAWLER_ON, running: crawler.isRunning(), lastRun: db.crawl?.lastRun || null, everyHours: CRAWL_EVERY_H, pagesRemembered: Object.keys(db.crawl?.seen || {}).length,
     events: Object.values(db.events).filter(e => e.sources.some(s => s.source === 'crawl')).length,
-    sites: Object.values(db.crawl?.sites || {}).map(s => ({ id: s.site, name: s.name, pages: s.pages || 0, eventsFound: s.eventsFound || 0, created: s.created || 0, merged: s.merged || 0, updated: s.updated || 0, blockedByRobots: s.blockedByRobots || 0, httpErrors: s.httpErrors || 0, skipped: s.skipped || {}, errors: (s.errors || []).slice(0, 3), finishedAt: s.finishedAt || null })) };
+    sites: Object.values(db.crawl?.sites || {}).map(s => ({ id: s.site, name: s.name, pages: s.pages || 0, eventsFound: s.eventsFound || 0, created: s.created || 0, merged: s.merged || 0, updated: s.updated || 0, blockedByRobots: s.blockedByRobots || 0, httpErrors: s.httpErrors || 0, skipped: s.skipped || {}, errors: (s.errors || []).slice(0, 3), finishedAt: s.finishedAt || null, kind: s.kind || 'pages', online: s.online || 0 })),
+    hackathons: feed.upcoming(db).filter(e => e.category === 'hackathons').length, onlineHackathons: feed.upcoming(db, 'online').length };
   return { stats: db.meta.aggregation || null, google: g, crawler: cr, sources: SOURCE_META, isAdmin: isAdmin(user), totalEvents: Object.keys(db.events).length, upcoming: feed.upcoming(db).length };
 });
 route('POST', '/api/crawler/run', async ({ user, body }) => {
@@ -687,7 +691,8 @@ const server = http.createServer(async (req, res) => {
     const body = ['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method) ? await readBody(req) : {};
     const user = auth.userFromRequest(db, req);
     const out = await r.handler({ req, res, user, params, body, qs: url.searchParams, ip: clientIp(req) });
-    if (req.method !== 'GET' || r.re.source.includes('events\\/')) store.save(db);
+    if (req.renewedSession && !res.headersSent && !res.getHeader('set-cookie')) res.setHeader('set-cookie', auth.sessionCookie(req.renewedSession, auth.SESSION_DAYS * 86400));
+    if (req.method !== 'GET' || req.renewedSession || r.re.source.includes('events\\/')) store.save(db);
     if (out !== null && !res.headersSent) send(res, 200, out);
   } catch (e) {
     if (!(e instanceof HttpError)) console.error(e);

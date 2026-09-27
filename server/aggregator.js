@@ -174,7 +174,7 @@ function newEventFromRecord(rec) {
   const ev = {
     id, title: rec.title, category: rec.category, city: rec.city, area: rec.area?.name, zone: rec.area?.zone,
     venue: rec.venue, lat: rec.lat, lng: rec.lng, start: rec.start, durH: rec.durH,
-    ticketing: rec.external ? 'external' : 'funillion', links: [], address: rec.address || null, mapsUrl: rec.mapsUrl || null, approxLocation: rec.approxLocation || false, allDay: rec.allDay || false,
+    ticketing: rec.external ? 'external' : 'funillion', links: [], address: rec.address || null, mapsUrl: rec.mapsUrl || null, approxLocation: rec.approxLocation || false, allDay: rec.allDay || false, online: !!rec.online, hack: null,
     tiers: rec.external ? [] : (rec.tiers.length ? rec.tiers : [{ name: 'Entry', price: rec.priceMin || 0, capacity: 100, sold: 0 }]).map((t, i) => ({ id: `t${i}`, name: t.name, price: Math.max(0, +t.price || 0), capacity: Math.max(1, +t.capacity || 100), sold: Math.min(+t.sold || 0, +t.capacity || 100) })),
     description: rec.description || '', organizer: rec.organizer || (rec.external ? null : 'Independent organiser'), organizerUserId: rec.organizerUserId || null,
     label: (tpl?.labels?.[0]) || rec.category.toUpperCase(), tags: tpl?.tags || [], image: rec.image || null,
@@ -190,6 +190,8 @@ function attach(ev, rec) {
   // external booking links (BookMyShow, District…) from every source, de-duplicated
   ev.links ||= [];
   for (const l of rec.links || []) if (!ev.links.some(x => x.url === l.url)) ev.links.push(l);
+  // hackathon details (deadline, prizes, themes) — the most complete value from any platform wins
+  if (rec.hack) { ev.hack ||= {}; for (const [k, v] of Object.entries(rec.hack)) if (v != null && !(Array.isArray(v) && !v.length) && (ev.hack[k] == null || k !== 'platform')) ev.hack[k] = v; }
   // an organiser listing the event on Funillion turns a "listed" event into a ticketed one
   if (rec.source === 'organizer' && ev.ticketing !== 'funillion') {
     ev.ticketing = 'funillion'; ev.organizer = rec.organizer || ev.organizer; ev.organizerUserId = rec.organizerUserId || ev.organizerUserId;

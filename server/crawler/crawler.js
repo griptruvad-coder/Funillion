@@ -7,6 +7,7 @@ const zlib = require('zlib');
 const robotsLib = require('./robots');
 const { extractEvents, toRecord, eventLinks } = require('./extract');
 const { activeSites } = require('./sites');
+const { hackToRecord } = require('./hackathons');
 
 const MAX_PAGES = Number(process.env.CRAWL_MAX_PAGES_PER_SITE) || 120;
 const MIN_DELAY = Number(process.env.CRAWL_DELAY_MS) || 1500;
@@ -72,7 +73,38 @@ async function sitemapUrls(site, st, limit) {
   return found.sort((a, b) => b.lastmod.localeCompare(a.lastmod)).slice(0, limit).map(e => e.loc);
 }
 
+// sites with a public JSON listing (hackathon platforms): a few paged requests instead of hundreds of pages
+async function crawlApiSite(site, db, ingest) {
+  const st = { site: site.id, name: site.name, kind: 'api', startedAt: new Date().toISOString(), pages: 0, sitemaps: 0, eventsFound: 0, created: 0, merged: 0, updated: 0, skipped: {}, blockedByRobots: 0, httpErrors: 0, errors: [], online: 0 };
+  let fails = 0;
+  const get = async (url, { json = false } = {}) => {
+    if (fails >= 3) return null;
+    const r = await politeGet(url, { accept: json ? 'application/json, text/plain, */*' : 'text/html,application/xhtml+xml', maxBytes: 15_000_000 });
+    if (r.blocked) { if (r.blocked === 'robots.txt') st.blockedByRobots++; else st.errors.push(r.blocked); return null; }
+    st.pages++;
+    if (r.status !== 200) { st.httpErrors++; fails++; if (st.errors.length < 8) st.errors.push(`${r.status || r.error} ${url.replace(/\?.*/, '')}`); return null; }
+    fails = 0;
+    if (!json) return r;
+    try { return JSON.parse(r.text); } catch { st.errors.push(`not JSON: ${url.replace(/\?.*/, '')}`); return null; }
+  };
+  const helpers = { skip: why => { st.skipped[why] = (st.skipped[why] || 0) + 1; }, error: m => st.errors.push(m) };
+  let hacks = [];
+  try { hacks = await site.fetch(get, helpers); } catch (e) { st.errors.push(e.message); }
+  for (const h of hacks) {
+    st.eventsFound++;
+    const r = hackToRecord(h, site);
+    if (r.skip) { helpers.skip(r.skip); continue; }
+    if (r.record.online) st.online++;
+    const res = ingest(db, r.record);
+    st[res.action] = (st[res.action] || 0) + 1;
+  }
+  if (fails >= 3) st.errors.push('Stopped: the site keeps refusing requests (blocked or rate-limited)');
+  st.finishedAt = new Date().toISOString();
+  return st;
+}
+
 async function crawlSite(site, db, ingest) {
+  if (site.kind === 'api') return crawlApiSite(site, db, ingest);
   const st = { site: site.id, name: site.name, startedAt: new Date().toISOString(), pages: 0, sitemaps: 0, eventsFound: 0, created: 0, merged: 0, updated: 0, skipped: {}, blockedByRobots: 0, httpErrors: 0, errors: [] };
   db.crawl ||= { sites: {}, seen: {} };
   const seen = db.crawl.seen;

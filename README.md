@@ -65,18 +65,21 @@ Set these in **Railway → service → Variables** (full list with comments in `
 | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | Real checkout. Use **test keys** (`rzp_test_…`) until real organisers list real events. Without keys the demo gateway is used. |
 | `RAZORPAY_WEBHOOK_SECRET` | Confirms bookings even if the buyer closes the tab after paying; tracks refunds. |
 | `ALLOWED_ORIGINS` | Your Netlify/custom domains (login breaks with 403 without it). |
+| `SESSION_DAYS` | How long users stay logged in (default 90; renewed on every visit after a week). |
 
 On Railway, demo data is **off by default**: the first deploy removes all fake events and demo people (Meera & co.) and keeps real accounts.
 
 **Razorpay webhook:** Dashboard → Settings → Webhooks → Add: URL `https://<railway-domain>/api/razorpay/webhook`, events `payment.captured`, `order.paid`, `refund.processed`, `refund.failed`, secret = `RAZORPAY_WEBHOOK_SECRET`.
 
 ### Funillion crawler (free real events, all cities)
-`server/crawler/` reads public event pages on AllEvents, District, Eventbrite, Townscript, Luma, Unstop and Devfolio (list in `server/crawler/sites.js`), every 12 h:
+`server/crawler/` reads public event pages on AllEvents, District, Eventbrite, Townscript and Luma (list in `server/crawler/sites.js`), plus hackathons from **Devpost, Unstop, Devfolio, HackerEarth and Hack2Skill** (`server/crawler/hackathons.js`), every 12 h:
 1. checks each site's **robots.txt** (skips anything disallowed, honours Crawl-delay) and identifies itself as `FunillionBot`
 2. opens the city listing pages + event sitemaps, then the event pages (one request at a time per site, ≥1.5 s apart; a site that keeps refusing is left alone)
 3. reads the **schema.org Event** data sites publish for search engines — title, date/time, venue, geo, price — and keeps only upcoming, in-person events in our 14 cities
 4. hands them to the aggregator, which merges the same event from different sites into one listing with every booking link
 5. remembers pages it has read, so later runs only fetch new/stale pages
+
+**Hackathons:** these platforms are read through the public JSON their own listing pages use (a few paged requests per run, still robots.txt-checked). Offline hackathons land in their city; **online hackathons** get the virtual city `online` — they show in every city's Discover (filter "🌐 Online", shelf "Online hackathons"), on `/in/online/hackathons`, never on the map or in the day planner. Prizes, themes and registration deadlines are shown on cards and event pages. The same hackathon on two platforms is merged.
 
 Only facts + a link back are stored (no images or copied descriptions). BookMyShow is off by default because its terms restrict automated access. Admins see per-site stats and a **Run crawler now** button in Organizer → Smart aggregation.
 

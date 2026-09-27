@@ -7,10 +7,12 @@ export async function render(el, id) {
   try { ({ event: e } = await api('/events/' + id)); } catch (err) { return errorBox(el, err); }
   const c = cat(e.category);
   const ext = e.ticketing === 'external';
+  const online = !!e.online, isHack = e.category === 'hackathons';
+  const verb = isHack ? 'Register on' : 'Book on';
   const qty = Object.fromEntries(e.tiers.map(t => [t.id, 0]));
   const past = new Date(e.start) < Date.now() - 30 * 60000;
   const end = new Date(new Date(e.start).getTime() + e.durH * 3600000);
-  const gcal = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(e.title)}&dates=${iso(e.start)}/${iso(end)}&location=${encodeURIComponent(`${e.venue}, ${e.area}, ${e.cityName}`)}&details=${encodeURIComponent('Found on Funillion')}`;
+  const gcal = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(e.title)}&dates=${iso(e.start)}/${iso(end)}&location=${encodeURIComponent(online ? (e.links[0]?.url || 'Online') : `${e.venue}, ${e.area}, ${e.cityName}`)}&details=${encodeURIComponent('Found on Funillion')}`;
   el.innerHTML = `
   <nav class="crumbs"><a href="#/discover">Discover</a> / <a href="#/discover?cat=${c.id}">${esc(c.label)}</a> / <span>${esc(e.title)}</span></nav>
   <div class="event-layout">
@@ -22,13 +24,14 @@ export async function render(el, id) {
         <p class="muted">${e.organizer ? `by ${esc(e.organizer)}` : ext && e.bookingSource ? `Listed on ${esc(e.bookingSource)}` : ''}</p>
       </div>
       <div class="facts">
-        <div><span>◷</span><div><b>${['Today', 'Tomorrow'].includes(relDay(e.start)) ? relDay(e.start) + ' · ' : ''}${fmtDayLong(e.start)}</b><small>${e.allDay ? 'Timing on the listing' : `${fmtTime(e.start)} – ${fmtTime(end)}${dayKey(end) !== dayKey(e.start) ? ' (next day)' : ''} · ${e.durH >= 20 ? Math.round(e.durH) + ' hours' : e.durH + (e.durH === 1 ? ' hr' : ' hrs')}`}</small></div></div>
-        <div><span>⌖</span><div><b>${esc(e.venue)}</b><small>${e.address ? esc(e.address) : `${esc(e.area)}, ${esc(e.cityName)}`}${e.approxLocation ? '' : ` · ${e.kmFromCentre} km from city centre`}</small></div></div>
-        <div><span>₹</span><div><b>${e.priceMin === 0 ? 'Free entry available' : priceLabel(e)}</b><small>${ext ? `Book on ${esc(e.bookingSource || 'the organiser\'s site')}` : `${e.tiers.length} ticket type${e.tiers.length > 1 ? 's' : ''} · instant e-ticket`}</small></div></div>
+        <div><span>◷</span><div><b>${['Today', 'Tomorrow'].includes(relDay(e.start)) ? relDay(e.start) + ' · ' : ''}${fmtDayLong(e.start)}</b><small>${e.durH >= 36 ? `Till ${fmtDayLong(end)}${e.allDay ? '' : ', ' + fmtTime(end)}` : e.allDay ? 'Timing on the listing' : `${fmtTime(e.start)} – ${fmtTime(end)}${dayKey(end) !== dayKey(e.start) ? ' (next day)' : ''} · ${e.durH >= 20 ? Math.round(e.durH) + ' hours' : e.durH + (e.durH === 1 ? ' hr' : ' hrs')}`}</small></div></div>
+        ${online ? `<div><span>🌐</span><div><b>Online</b><small>Join from anywhere${e.hack?.platform ? ` · hosted on ${esc(e.hack.platform)}` : ''}</small></div></div>` : `<div><span>⌖</span><div><b>${esc(e.venue)}</b><small>${e.address ? esc(e.address) : `${esc(e.area)}, ${esc(e.cityName)}`}${e.approxLocation || e.kmFromCentre == null ? '' : ` · ${e.kmFromCentre} km from city centre`}</small></div></div>`}
+        <div><span>₹</span><div><b>${e.priceMin === 0 ? 'Free entry available' : priceLabel(e)}</b><small>${ext ? `${verb} ${esc(e.bookingSource || 'the organiser\'s site')}` : `${e.tiers.length} ticket type${e.tiers.length > 1 ? 's' : ''} · instant e-ticket`}</small></div></div>
       </div>
       ${e.friends.length || e.interestedCount ? `<div class="social-proof">${e.friends.map(f => avatar(f, 'sm')).join('')}<span>${e.friendCount ? `<b>${e.friendCount} friend${e.friendCount > 1 ? 's' : ''}</b> interested` : ''}${e.friendCount && e.interestedCount ? ' · ' : ''}${e.interestedCount ? `${e.interestedCount} people on Funillion interested` : ''}</span></div>` : ''}
+      ${e.hack && (e.hack.deadline || e.hack.prize || e.hack.themes?.length || e.hack.registrations) ? `<div class="hack-facts">${e.hack.deadline ? `<div><small>Registration closes</small><b>${esc(fmtDayLong(e.hack.deadline))}</b></div>` : ''}${e.hack.prize ? `<div><small>Prizes</small><b>${esc(e.hack.prize)}</b></div>` : ''}${e.hack.themes?.length ? `<div><small>Themes</small><b>${esc(e.hack.themes.join(', '))}</b></div>` : ''}${e.hack.registrations ? `<div><small>Registered</small><b>${Number(e.hack.registrations).toLocaleString('en-IN')} hackers</b></div>` : ''}</div>` : ''}
       <section class="block"><h2>About</h2><p class="prose">${esc(e.description || (ext ? 'Full details, line-up and prices are on the listing — use the booking links.' : ''))}</p><div class="chips wrap small">${(e.tags || []).map(t => `<span class="chip static">#${esc(t)}</span>`).join('')}</div></section>
-      <section class="block"><h2>Location</h2><div id="mini-map" class="mini-map"></div>${e.approxLocation ? '<p class="fine">Pin shows the approximate area — check the address above.</p>' : ''}<a class="link" target="_blank" rel="noopener" href="${e.mapsUrl ? esc(e.mapsUrl) : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(e.address || `${e.lat},${e.lng}`)}`}">Open in Google Maps ↗</a></section>
+      ${online ? `<section class="block"><h2>Where</h2><div class="online-box"><span>🌐</span><div><b>Online event</b><p class="muted small">Register on ${esc(e.bookingSource || 'the listing')} — you'll get the joining details there.</p></div></div></section>` : `<section class="block"><h2>Location</h2><div id="mini-map" class="mini-map"></div>${e.approxLocation ? '<p class="fine">Pin shows the approximate area — check the address above.</p>' : ''}<a class="link" target="_blank" rel="noopener" href="${e.mapsUrl ? esc(e.mapsUrl) : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(e.address || `${e.lat},${e.lng}`)}`}">Open in Google Maps ↗</a></section>`}
       <section class="block sources-block"><h2>✳ Where this listing comes from</h2>
         <p class="muted">Funillion found this event on ${e.sourceDetails.length} platform${e.sourceDetails.length > 1 ? 's' : ''}${e.sourceDetails.length > 1 ? ' and merged them into one clean listing — same event, no duplicates' : ''}.</p>
         <ul class="source-list">${e.sourceDetails.map(s => `<li><b>${esc(s.name)}</b><span>${esc(s.kind || '')}</span><em>“${esc(s.title)}”${s.priceMin != null ? ` · from ${money(s.priceMin)}` : ''}</em></li>`).join('')}</ul>
@@ -36,9 +39,9 @@ export async function render(el, id) {
     </div>
     <aside class="event-side">
       ${ext ? `<div class="ticket-box external">
-        <h3>${past ? 'This event has ended' : 'Get tickets'}</h3>
-        <p class="muted small">Tickets for this event are sold by the organiser's platform. You'll book there — Funillion helps you find it and plan it.</p>
-        <div class="ext-links">${(e.links.filter(l => l.type === 'tickets').length ? e.links.filter(l => l.type === 'tickets') : e.links).map((l, i) => `<a class="btn ${i ? 'ghost' : 'primary'} big full" target="_blank" rel="noopener sponsored" href="${esc(l.url)}" data-out="${esc(l.source)}">${l.type === 'tickets' ? 'Book on' : 'Details on'} ${esc(l.source || 'listing')} ↗</a>`).join('') || '<p class="muted">No booking link yet.</p>'}</div>
+        <h3>${past ? 'This event has ended' : isHack ? 'Register' : 'Get tickets'}</h3>
+        <p class="muted small">${isHack ? 'Registration happens on the organiser\'s platform. Funillion helps you find it, track deadlines and team up with friends.' : 'Tickets for this event are sold by the organiser\'s platform. You\'ll book there — Funillion helps you find it and plan it.'}</p>
+        <div class="ext-links">${(e.links.filter(l => l.type === 'tickets').length ? e.links.filter(l => l.type === 'tickets') : e.links).map((l, i) => `<a class="btn ${i ? 'ghost' : 'primary'} big full" target="_blank" rel="noopener sponsored" href="${esc(l.url)}" data-out="${esc(l.source)}">${l.type === 'tickets' ? verb : 'Details on'} ${esc(l.source || 'listing')} ↗</a>`).join('') || '<p class="muted">No booking link yet.</p>'}</div>
         ${e.links.some(l => l.type !== 'tickets') && e.links.some(l => l.type === 'tickets') ? `<p class="fine">More info: ${e.links.filter(l => l.type !== 'tickets').map(l => `<a class="link" target="_blank" rel="noopener" href="${esc(l.url)}">${esc(l.source)}</a>`).join(' · ')}</p>` : ''}
       </div>` : `<div class="ticket-box" id="ticket-box">
         <h3>${past ? 'This event has ended' : e.soldOut ? 'Sold out' : 'Get tickets'}</h3>
@@ -57,7 +60,7 @@ export async function render(el, id) {
       <a class="btn ghost full" target="_blank" rel="noopener" href="${gcal}">＋ Add to Google Calendar</a>
     </aside>
   </div>
-  ${e.similar.length ? `<section class="section"><div class="section-head"><div><p class="eyebrow">MORE LIKE THIS</p><h2>Similar in ${esc(city(e.city).short)}</h2></div></div><div class="grid four">${e.similar.map(s => card(s)).join('')}</div></section>` : ''}`;
+  ${e.similar.length ? `<section class="section"><div class="section-head"><div><p class="eyebrow">MORE LIKE THIS</p><h2>${online ? 'More online hackathons' : `Similar in ${esc(city(e.city).short)}`}</h2></div></div><div class="grid four">${e.similar.map(s => card(s)).join('')}</div></section>` : ''}`;
 
   // tickets
   const update = () => {
@@ -96,7 +99,7 @@ export async function render(el, id) {
   $('#group-plan').onclick = () => { if (requireAuth('Log in to plan with friends')) addToGroup(e); };
 
   // map
-  if (window.L) {
+  if (online) {} else if (window.L) {
     map = L.map('mini-map', { scrollWheelZoom: false }).setView([e.lat, e.lng], 14);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
     L.marker([e.lat, e.lng], { icon: L.divIcon({ className: 'pin', html: `<span style="--pc:${c.color};--pi:${c.ink}"><i>${c.icon}</i></span>`, iconSize: [34, 34], iconAnchor: [17, 34] }) }).addTo(map);

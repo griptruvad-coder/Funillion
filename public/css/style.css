@@ -608,3 +608,7 @@ dialog::backdrop{background:#10140fc0;backdrop-filter:blur(4px)}
 .test-banner{font-size:13px;background:#e8f0ff;border:1px solid #c9d8ff;color:#1d3a8a;border-radius:8px;padding:10px 12px}
 .admin-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px;margin:18px 0;display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between}
 .admin-card .kv{display:flex;gap:22px;flex-wrap:wrap}.admin-card .kv b{display:block;font:700 22px var(--head)}.admin-card .kv span{font-size:12px;color:var(--muted)}
+.hack-line{font-size:12.5px;font-weight:600;color:#3b4a12;background:#f3ffd0;border-radius:6px;padding:4px 8px;margin:-4px 0 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hack-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:14px 0}
+.hack-facts div{background:#f3ffd0;border-radius:10px;padding:10px 12px}.hack-facts small{display:block;font-size:12px;color:var(--muted)}.hack-facts b{font-size:15px}
+.online-box{display:flex;gap:12px;align-items:center;background:#eef3ff;border-radius:12px;padding:14px 16px}.online-box span{font-size:26px}

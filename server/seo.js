@@ -20,7 +20,10 @@ const eventPath = ev => {
   const withCity = new RegExp(`\\b${cityName}\\b`, 'i').test(ev.title) ? ev.title : `${ev.title} ${cityName}`;
   return `/e/${slugify(withCity)}-${ev.id}`;
 };
-const cityOf = id => CITIES.find(c => c.id === id);
+// online hackathons live under a virtual "city" so they get their own pages: /in/online, /in/online/hackathons
+const ONLINE = { id: 'online', name: 'Online', short: 'Online', state: null, areas: [] };
+const cityOf = id => (id === 'online' ? ONLINE : CITIES.find(c => c.id === id));
+const ALL_PLACES = [...CITIES, ONLINE];
 const catOf = id => CATEGORIES.find(c => c.id === id);
 const TZ = { timeZone: 'Asia/Kolkata' };
 const fmtDay = d => new Date(d).toLocaleDateString('en-IN', { ...TZ, weekday: 'short', day: 'numeric', month: 'short' });
@@ -61,7 +64,7 @@ ${schema.map(jsonLd).join('')}</head><body>
 <main class="seo">${body}</main>
 <footer class="seo-footer"><div><a class="logo" href="/">funillion<span>✳</span></a><p>A million ways to have fun — concerts, comedy, hackathons, bhajan clubbing, parties and meetups across India.</p></div>
 <div><b>Cities</b>${CITIES.map(c => `<a href="/in/${c.id}">Events in ${esc(c.short)}</a>`).join('')}</div>
-<div><b>Popular</b>${['comedy', 'music', 'hackathons', 'bhajan', 'parties', 'workshops'].map(k => `<a href="/in/delhi/${CAT_SLUG[k]}">${esc(catOf(k).label)} in Delhi</a>`).join('')}${['comedy', 'music'].map(k => `<a href="/in/mumbai/${CAT_SLUG[k]}">${esc(catOf(k).label)} in Mumbai</a>`).join('')}<a href="/in/bengaluru/hackathons">Hackathons in Bengaluru</a></div></footer>
+<div><b>Popular</b>${['comedy', 'music', 'hackathons', 'bhajan', 'parties', 'workshops'].map(k => `<a href="/in/delhi/${CAT_SLUG[k]}">${esc(catOf(k).label)} in Delhi</a>`).join('')}${['comedy', 'music'].map(k => `<a href="/in/mumbai/${CAT_SLUG[k]}">${esc(catOf(k).label)} in Mumbai</a>`).join('')}<a href="/in/bengaluru/hackathons">Hackathons in Bengaluru</a><a href="/in/online/hackathons">Online hackathons</a></div></footer>
 </body></html>`;
 }
 
@@ -84,25 +87,27 @@ function listPage(db, req, { city, cat, coll, pageNo }) {
   list = list.slice((pageNo - 1) * PER_PAGE, pageNo * PER_PAGE);
   const what = cat ? catOf(cat.id).label : 'Events';
   const when = coll ? COLLECTIONS[coll] : 'Upcoming';
-  const h1 = coll === 'free' ? `Free ${what.toLowerCase()} in ${city.name}` : coll ? `${what} in ${city.name} ${when.toLowerCase()}` : `${what} in ${city.name}`;
+  const online = city.id === 'online';
+  const where = online ? 'online' : `in ${city.name}`;
+  const h1 = online ? `${coll === 'free' ? 'Free online' : 'Online'} ${what.toLowerCase()}${coll && coll !== 'free' ? ' ' + when.toLowerCase() : ''}` : coll === 'free' ? `Free ${what.toLowerCase()} in ${city.name}` : coll ? `${what} in ${city.name} ${when.toLowerCase()}` : `${what} in ${city.name}`;
   const pathNow = `/in/${city.id}${cat ? '/' + CAT_SLUG[cat.id] : ''}${coll ? '/' + coll : ''}`;
   const canonical = base + pathNow + (pageNo > 1 ? `?page=${pageNo}` : '');
   const title = `${h1} — ${total ? `${total} upcoming, ` : ''}${monthYear()} | Funillion`;
   const sources = [...new Set(list.flatMap(e => e.sources.map(s => s.site || (s.source === 'google' ? null : null)).filter(Boolean)))].slice(0, 5);
-  const description = total ? `${total} ${what.toLowerCase()} in ${city.name}${coll ? ' ' + when.toLowerCase() : ''} — dates, venues, prices and booking links in one place${sources.length ? `, from ${sources.join(', ')} & more` : ''}. Plan with friends on Funillion.` : `Find ${what.toLowerCase()} in ${city.name} on Funillion — new events are added every few hours.`;
+  const description = total ? `${total} ${what.toLowerCase()} ${where}${coll ? ' ' + when.toLowerCase() : ''} — ${online ? 'dates, prizes, registration deadlines and links' : 'dates, venues, prices and booking links'} in one place${sources.length ? `, from ${sources.join(', ')} & more` : ''}. Plan with friends on Funillion.` : `Find ${what.toLowerCase()} ${where} on Funillion — new events are added every few hours.`;
   const cats = CATEGORIES.map(k => ({ k, n: Object.values(db.events).filter(e => e.city === city.id && e.category === k.id && new Date(e.end || e.start).getTime() > now).length })).filter(x => x.n).sort((a, b) => b.n - a.n);
   const crumbs = [{ name: 'Funillion', url: base + '/' }, { name: city.name, url: `${base}/in/${city.id}` }, ...(cat ? [{ name: what, url: `${base}/in/${city.id}/${CAT_SLUG[cat.id]}` }] : []), ...(coll ? [{ name: when, url: base + pathNow }] : [])];
   const body = `
   <nav class="crumbs">${crumbs.map((c, i) => i < crumbs.length - 1 ? `<a href="${esc(c.url.replace(base, '') || '/')}">${esc(c.name)}</a> / ` : `<span>${esc(c.name)}</span>`).join('')}</nav>
   <p class="eyebrow">${esc(city.name.toUpperCase())} · ${esc(monthYear().toUpperCase())}</p>
   <h1>${esc(h1)}</h1>
-  <p class="lede">${total ? `${total} ${esc(what.toLowerCase())} coming up${coll ? ' ' + esc(when.toLowerCase()) : ''} in ${esc(city.name)} — with dates, venues, prices and where to book. Funillion checks ticketing sites and organisers every few hours, so this list stays fresh.` : `No ${esc(what.toLowerCase())} listed${coll ? ' ' + esc(when.toLowerCase()) : ''} in ${esc(city.name)} right now. New events are added every few hours — check the full city list below.`}</p>
+  <p class="lede">${total ? `${total} ${esc(what.toLowerCase())} coming up${coll ? ' ' + esc(when.toLowerCase()) : ''} ${esc(where)} — with dates, ${online ? 'prizes, registration deadlines' : 'venues, prices'} and where to ${online ? 'register' : 'book'}. Funillion checks ${online ? 'Devfolio, Unstop, Devpost, HackerEarth and more' : 'ticketing sites and organisers'} every few hours, so this list stays fresh.` : `No ${esc(what.toLowerCase())} listed${coll ? ' ' + esc(when.toLowerCase()) : ''} ${esc(where)} right now. New events are added every few hours — check the full list below.`}</p>
   <div class="chips wrap s-chips">${Object.entries(COLLECTIONS).map(([k, v]) => `<a class="chip ${coll === k ? 'selected' : ''}" href="/in/${city.id}${cat ? '/' + CAT_SLUG[cat.id] : ''}/${k}">${esc(v)}</a>`).join('')}${coll ? `<a class="chip" href="/in/${city.id}${cat ? '/' + CAT_SLUG[cat.id] : ''}">All dates</a>` : ''}</div>
   ${list.length ? `<ol class="s-list">${list.map(e => card(e, base)).join('')}</ol>` : `<div class="empty"><h3>Nothing here yet</h3><p><a class="link" href="/in/${city.id}">See everything in ${esc(city.short)}</a></p></div>`}
   ${total > pageNo * PER_PAGE ? `<p class="center"><a class="btn ghost" href="${pathNow}?page=${pageNo + 1}">More ${esc(what.toLowerCase())} →</a></p>` : ''}
   <section class="s-cta"><div><b>Plan it with friends</b><span>Save events, get a personal feed, let AI plan your day, and book in seconds.</span></div><a class="btn primary" href="/#/discover">Open Funillion ↗</a></section>
   ${cats.length ? `<section class="s-links"><h2>More in ${esc(city.short)}</h2><div class="chips wrap">${cats.map(x => `<a class="chip" href="/in/${city.id}/${CAT_SLUG[x.k.id]}">${x.k.icon} ${esc(x.k.label)} <small>(${x.n})</small></a>`).join('')}</div></section>` : ''}
-  ${cat ? `<section class="s-links"><h2>${esc(what)} in other cities</h2><div class="chips wrap">${CITIES.filter(c => c.id !== city.id).map(c => `<a class="chip" href="/in/${c.id}/${CAT_SLUG[cat.id]}">${esc(c.short)}</a>`).join('')}</div></section>` : ''}`;
+  ${cat ? `<section class="s-links"><h2>${esc(what)} ${online ? 'in cities' : 'in other cities'}</h2><div class="chips wrap">${(cat.id === 'hackathons' ? ALL_PLACES : CITIES).filter(c => c.id !== city.id).map(c => `<a class="chip" href="/in/${c.id}/${CAT_SLUG[cat.id]}">${c.id === 'online' ? '🌐 Online' : esc(c.short)}</a>`).join('')}</div></section>` : ''}`;
   const schema = [
     { '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: crumbs.map((c, i) => ({ '@type': 'ListItem', position: i + 1, name: c.name, item: c.url })) },
     ...(list.length ? [{ '@context': 'https://schema.org', '@type': 'ItemList', name: h1, numberOfItems: total, itemListElement: list.slice(0, 30).map((e, i) => ({ '@type': 'ListItem', position: i + 1, url: base + eventPath(e) })) }] : []),
@@ -120,8 +125,9 @@ function eventPage(db, req, ev) {
   const tickets = links.filter(l => l.type === 'tickets');
   const price = money(ev.priceMin);
   const when = `${fmtLong(ev.start)}${ev.allDay ? '' : ', ' + fmtTime(ev.start)}`;
-  const title = `${ev.title} — ${fmtDay(ev.start)}, ${ev.venue}, ${city.short} | Tickets & details | Funillion`;
-  const description = `${ev.title} at ${ev.venue}, ${city.name} on ${when}.${price ? ` Tickets ${price === 'Free' ? 'free' : 'from ' + price}.` : ''} ${String(ev.description || '').slice(0, 110)}`.trim();
+  const online = !!ev.online;
+  const title = online ? `${ev.title} — online hackathon, ${fmtDay(ev.start)} | Register & details | Funillion` : `${ev.title} — ${fmtDay(ev.start)}, ${ev.venue}, ${city.short} | Tickets & details | Funillion`;
+  const description = `${ev.title} ${online ? 'online' : `at ${ev.venue}, ${city.name}`} on ${when}.${price ? ` ${online ? 'Entry' : 'Tickets'} ${price === 'Free' ? 'free' : 'from ' + price}.` : ''} ${String(ev.description || '').slice(0, 110)}`.trim();
   const similar = Object.values(db.events).filter(e => e.id !== ev.id && e.city === ev.city && e.category === ev.category && new Date(e.end || e.start) > Date.now()).sort((a, b) => a.start.localeCompare(b.start)).slice(0, 6);
   const body = `
   <nav class="crumbs"><a href="/">Funillion</a> / <a href="/in/${city.id}">${esc(city.name)}</a> / <a href="/in/${city.id}/${CAT_SLUG[ev.category]}">${esc(c.label)}</a> / <span>${esc(ev.title)}</span></nav>
@@ -131,16 +137,18 @@ function eventPage(db, req, ev) {
     ${ended ? '<p class="note">This event has ended. <a class="link" href="/in/' + city.id + '/' + CAT_SLUG[ev.category] + '">See upcoming ' + esc(c.label.toLowerCase()) + ' in ' + esc(city.short) + ' →</a></p>' : ''}
     <dl class="s-facts">
       <div><dt>When</dt><dd>${esc(when)}${ev.allDay ? ' <small>(timing on the listing)</small>' : ''}</dd></div>
-      <div><dt>Where</dt><dd>${esc(ev.venue)}${ev.address ? `<small>${esc(ev.address)}</small>` : ev.area ? `<small>${esc(ev.area)}, ${esc(city.name)}</small>` : ''}</dd></div>
+      <div><dt>Where</dt><dd>${online ? '🌐 Online — join from anywhere' : esc(ev.venue)}${online ? '' : ev.address ? `<small>${esc(ev.address)}</small>` : ev.area ? `<small>${esc(ev.area)}, ${esc(city.name)}</small>` : ''}</dd></div>
+      ${ev.hack?.deadline ? `<div><dt>Register by</dt><dd>${esc(fmtLong(ev.hack.deadline))}</dd></div>` : ''}
+      ${ev.hack?.prize ? `<div><dt>Prizes</dt><dd>${esc(ev.hack.prize)}</dd></div>` : ''}
       <div><dt>Price</dt><dd>${esc(price || 'On the listing')}</dd></div>
       ${ev.organizer ? `<div><dt>Organiser</dt><dd>${esc(ev.organizer)}</dd></div>` : ''}
     </dl>
     ${ev.description ? `<p class="prose">${esc(ev.description)}</p>` : ''}
     <div class="s-actions">
       ${!ended && ev.ticketing !== 'external' ? `<a class="btn primary big" href="/#/event/${ev.id}">Get tickets on Funillion</a>` : ''}
-      ${!ended ? (tickets.length ? tickets : links).slice(0, 4).map((l, i) => `<a class="btn ${i ? 'ghost' : 'primary'} big" rel="nofollow sponsored noopener" target="_blank" href="${esc(l.url)}">${l.type === 'tickets' ? 'Book on' : 'Details on'} ${esc(l.source || 'listing')} ↗</a>`).join('') : ''}
+      ${!ended ? (tickets.length ? tickets : links).slice(0, 4).map((l, i) => `<a class="btn ${i ? 'ghost' : 'primary'} big" rel="nofollow sponsored noopener" target="_blank" href="${esc(l.url)}">${l.type === 'tickets' ? (ev.category === 'hackathons' ? 'Register on' : 'Book on') : 'Details on'} ${esc(l.source || 'listing')} ↗</a>`).join('') : ''}
       <a class="btn dark big" href="/#/event/${ev.id}">☺ Save · plan with friends</a>
-      <a class="btn ghost big" target="_blank" rel="noopener" href="${esc(ev.mapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${ev.venue} ${ev.address || city.name}`)}`)}">⌖ Directions</a>
+      ${online ? '' : `<a class="btn ghost big" target="_blank" rel="noopener" href="${esc(ev.mapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${ev.venue} ${ev.address || city.name}`)}`)}">⌖ Directions</a>`}
     </div>
     ${ev.sources.length > 1 ? `<p class="fine">Listed on ${ev.sources.length} platforms — Funillion merged them into one page.</p>` : ''}
   </article>
@@ -150,8 +158,8 @@ function eventPage(db, req, ev) {
     '@context': 'https://schema.org', '@type': 'Event', name: ev.title, url: canonical,
     startDate: ev.allDay ? istDayKey(ev.start) : new Date(ev.start).toLocaleString('sv-SE', TZ).replace(' ', 'T') + '+05:30',
     ...(ev.end && !ev.allDay ? { endDate: new Date(ev.end).toLocaleString('sv-SE', TZ).replace(' ', 'T') + '+05:30' } : {}),
-    eventStatus: 'https://schema.org/EventScheduled', eventAttendanceMode: 'https://schema.org/OfflineEventAttendanceMode',
-    location: { '@type': 'Place', name: ev.venue, address: { '@type': 'PostalAddress', streetAddress: ev.address || ev.venue, addressLocality: ev.area || city.short, addressRegion: city.state, addressCountry: 'IN' }, ...(!ev.approxLocation && ev.lat ? { geo: { '@type': 'GeoCoordinates', latitude: ev.lat, longitude: ev.lng } } : {}) },
+    eventStatus: 'https://schema.org/EventScheduled', eventAttendanceMode: `https://schema.org/${online ? 'Online' : 'Offline'}EventAttendanceMode`,
+    location: online ? { '@type': 'VirtualLocation', url: tickets[0]?.url || canonical } : { '@type': 'Place', name: ev.venue, address: { '@type': 'PostalAddress', streetAddress: ev.address || ev.venue, addressLocality: ev.area || city.short, addressRegion: city.state, addressCountry: 'IN' }, ...(!ev.approxLocation && ev.lat ? { geo: { '@type': 'GeoCoordinates', latitude: ev.lat, longitude: ev.lng } } : {}) },
     ...(ev.description ? { description: ev.description } : {}),
     ...(ev.organizer ? { organizer: { '@type': 'Organization', name: ev.organizer } } : {}),
     ...(ev.priceMin != null ? { offers: { '@type': 'Offer', price: ev.priceMin, priceCurrency: 'INR', url: tickets[0]?.url || canonical, availability: 'https://schema.org/InStock' } } : {}),
@@ -164,13 +172,13 @@ function eventPage(db, req, ev) {
 const xml = (urls) => `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.map(u => `<url><loc>${esc(u.loc)}</loc>${u.lastmod ? `<lastmod>${u.lastmod}</lastmod>` : ''}</url>`).join('')}</urlset>`;
 function sitemapIndex(db, req) {
   const base = baseUrl(req), today = new Date().toISOString().slice(0, 10);
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>${base}/sitemaps/pages.xml</loc><lastmod>${today}</lastmod></sitemap>${CITIES.map(c => `<sitemap><loc>${base}/sitemaps/events-${c.id}.xml</loc><lastmod>${today}</lastmod></sitemap>`).join('')}</sitemapindex>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>${base}/sitemaps/pages.xml</loc><lastmod>${today}</lastmod></sitemap>${ALL_PLACES.map(c => `<sitemap><loc>${base}/sitemaps/events-${c.id}.xml</loc><lastmod>${today}</lastmod></sitemap>`).join('')}</sitemapindex>`;
 }
 function sitemapPages(db, req) {
   const base = baseUrl(req), now = Date.now(), today = new Date().toISOString().slice(0, 10);
   const up = Object.values(db.events).filter(e => e.status === 'live' && new Date(e.end || e.start).getTime() > now);
   const urls = [{ loc: base + '/', lastmod: today }];
-  for (const city of CITIES) {
+  for (const city of ALL_PLACES) {
     const ce = up.filter(e => e.city === city.id);
     if (ce.length >= 2) urls.push({ loc: `${base}/in/${city.id}`, lastmod: today });
     for (const k of Object.keys(COLLECTIONS)) if (ce.filter(e => inCollection(e, k)).length >= 2) urls.push({ loc: `${base}/in/${city.id}/${k}`, lastmod: today });

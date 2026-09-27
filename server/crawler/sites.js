@@ -1,10 +1,12 @@
+const { SOURCES: HACKATHON_SOURCES } = require('./hackathons');
+
 // Which websites the crawler reads, and where it starts on each.
 // Every URL still goes through that site's robots.txt at runtime — if a site disallows it, it is skipped.
 // Add a site: give it an id, name, the listing pages per city (seeds) and/or sitemaps, and a pattern for event detail URLs.
 
 // our city id → each site's own slug
 const SLUGS = {
-  allevents: { delhi: 'new-delhi', mumbai: 'mumbai', bengaluru: 'bangalore', hyderabad: 'hyderabad', chennai: 'chennai', kolkata: 'kolkata', pune: 'pune', ahmedabad: 'ahmedabad', jaipur: 'jaipur', chandigarh: 'chandigarh', lucknow: 'lucknow', goa: 'goa', kochi: 'kochi', indore: 'indore' },
+  allevents: { delhi: 'new-delhi', mumbai: 'mumbai', bengaluru: 'bangalore', hyderabad: 'hyderabad', chennai: 'chennai', kolkata: 'kolkata', pune: 'pune-in', ahmedabad: 'ahmedabad', jaipur: 'jaipur', chandigarh: 'chandigarh', lucknow: 'lucknow', goa: 'goa', kochi: 'kochi', indore: 'indore' },
   eventbrite: { delhi: 'new-delhi', mumbai: 'mumbai', bengaluru: 'bangalore', hyderabad: 'hyderabad', chennai: 'chennai', kolkata: 'kolkata', pune: 'pune', ahmedabad: 'ahmedabad', jaipur: 'jaipur', chandigarh: 'chandigarh', lucknow: 'lucknow', goa: 'goa', kochi: 'kochi', indore: 'indore' },
   townscript: { delhi: 'delhi', mumbai: 'mumbai', bengaluru: 'bangalore', hyderabad: 'hyderabad', chennai: 'chennai', kolkata: 'kolkata', pune: 'pune', ahmedabad: 'ahmedabad', jaipur: 'jaipur', chandigarh: 'chandigarh', lucknow: 'lucknow', goa: 'goa', kochi: 'kochi', indore: 'indore' },
   luma: { delhi: 'new-delhi', mumbai: 'mumbai', bengaluru: 'bengaluru', hyderabad: 'hyderabad', chennai: 'chennai', pune: 'pune', kolkata: 'kolkata', goa: 'goa' },
@@ -23,10 +25,7 @@ const SITES = [
     seeds: seedsFor('townscript', s => `https://www.townscript.com/in/${s}`) },
   { id: 'luma', name: 'Luma', enabled: true, eventPattern: /^\/[a-z0-9]{8}$/i,
     seeds: seedsFor('luma', s => `https://luma.com/${s}`) },
-  { id: 'unstop', name: 'Unstop', enabled: true, eventPattern: /^\/hackathons\/[a-z0-9-]+-\d+$/i,
-    seeds: [{ url: 'https://unstop.com/hackathons' }] },
-  { id: 'devfolio', name: 'Devfolio', enabled: true, eventPattern: /^\/?$/, hostPattern: /\.devfolio\.co$/,
-    seeds: [{ url: 'https://devfolio.co/hackathons' }] },
+  // Hackathon platforms (Devpost, Unstop, Devfolio, HackerEarth, Hack2Skill) read their public listing JSON — see hackathons.js
   // Off by default: BookMyShow's terms restrict automated access. Enable only with their permission (CRAWL_SITES=...,bookmyshow).
   { id: 'bookmyshow', name: 'BookMyShow', enabled: false, eventPattern: /^\/events\/[a-z0-9-]+\/ET\d+/i,
     seeds: seedsFor('bookmyshow', s => `https://in.bookmyshow.com/explore/events-${s}`) },
@@ -41,8 +40,8 @@ function extraSites() {
 
 function activeSites() {
   const only = (process.env.CRAWL_SITES || '').split(',').map(s => s.trim()).filter(Boolean);
-  const all = [...SITES, ...extraSites()];
+  const all = [...SITES, ...HACKATHON_SOURCES, ...extraSites()];
   return all.filter(s => (only.length ? only.includes(s.id) : s.enabled));
 }
 
-module.exports = { SITES, activeSites };
+module.exports = { SITES, HACKATHON_SOURCES, activeSites };
