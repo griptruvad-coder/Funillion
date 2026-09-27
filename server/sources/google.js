@@ -163,7 +163,8 @@ async function run(db, ingest, { force = false, log = console.log } = {}) {
     }
   } finally {
     u.running = false;
-    u.lastRun = new Date().toISOString();
+    u.lastAttempt = new Date().toISOString();
+    if (stats.queries > 0) u.lastRun = u.lastAttempt; // a run where every search failed is retried in 6 h, not 7 days
     u.last = { ...stats, finishedAt: new Date().toISOString() };
   }
   log(`› Google Events: ${stats.queries} searches → ${stats.results} results → ${stats.created} new, ${stats.merged} merged, ${stats.updated} updated`);
