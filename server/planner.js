@@ -169,6 +169,8 @@ function travelMinutes(a, b, city) {
 }
 
 function cheapestTier(ev, people) {
+  // listed events are booked on the source site — use its known price (or ₹0 if the listing doesn't say)
+  if (ev.ticketing === 'external') return { id: null, name: ev.priceMin == null ? 'Price on listing' : 'Tickets', price: ev.priceMin || 0, external: true };
   return ev.tiers.filter(t => t.capacity - t.sold >= people).sort((a, b) => a.price - b.price)[0] || null;
 }
 
@@ -293,7 +295,7 @@ function toItinerary(p, city, c, stayH) {
     const startMs = new Date(x.e.start).getTime();
     steps.push({ type: 'event', eventId: x.e.id, title: x.e.title, category: x.e.category, venue: x.e.venue, area: x.e.area, lat: x.e.lat, lng: x.e.lng,
       start: x.e.start, arrive: fmtTime(startMs - 10 * 60000), leave: fmtTime(startMs + stayH(x.e, last) * 3600000) + (istDayKey(startMs + stayH(x.e, last) * 3600000) !== istDayKey(startMs) && istHour(startMs + stayH(x.e, last) * 3600000) > 5 ? ' (next day)' : ''), leavesEarly: !last && stayH(x.e, false) < x.e.durH,
-      tierId: x.tier.id, tierName: x.tier.name, pricePerPerson: x.tier.price, cost: x.cost, why: x.why });
+      tierId: x.tier.id, tierName: x.tier.name, pricePerPerson: x.tier.price, cost: x.cost, why: x.why, external: !!x.tier.external, priceUnknown: x.tier.external && x.e.priceMin == null });
   });
   const cats = p.seq.map(x => CATEGORIES.find(k => k.id === x.e.category)?.label);
   return {

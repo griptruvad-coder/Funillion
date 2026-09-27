@@ -1,5 +1,17 @@
 import { state, api, $, $$, esc, money, cat, poster, fmtDayLong, fmtTime, fmtDay, relDay, requireAuth, toast, go, loading, errorBox } from '../core.js';
 
+let rzpLoader = null;
+function loadRazorpay() {
+  if (window.Razorpay) return Promise.resolve();
+  rzpLoader ||= new Promise((resolve, reject) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    sc.onload = resolve; sc.onerror = () => { rzpLoader = null; reject(new Error('Could not load Razorpay — check your internet connection')); };
+    document.head.appendChild(sc);
+  });
+  return rzpLoader;
+}
+
 export async function checkout(el, id) {
   if (!requireAuth('Log in to complete your booking')) { el.innerHTML = ''; return; }
   loading(el);
@@ -9,6 +21,9 @@ export async function checkout(el, id) {
   if (b.status !== 'pending') { el.innerHTML = `<div class="empty"><h3>This hold has ${b.status === 'expired' ? 'expired' : 'been ' + b.status}</h3><p>Your seats were released so others could book them.</p><a class="btn primary" href="#/event/${b.eventId}">Try again</a></div>`; return; }
   const e = b.event, free = b.total === 0;
   const u = state.user;
+  const pay = state.meta.payments || { provider: 'demo' };
+  const rzp = pay.provider === 'razorpay';
+  const payLabel = free ? 'Confirm free registration' : `Pay ${money(b.total)}`;
   el.innerHTML = `
   <div class="checkout">
     <div class="checkout-main">
@@ -16,11 +31,14 @@ export async function checkout(el, id) {
       <div class="hold-timer" id="timer">Seats held for <b>10:00</b></div>
       <form id="pay-form" class="stack">
         <fieldset><legend>Who's going? <small>(tickets are sent here)</small></legend>
-          <div class="two"><label>Full name<input name="name" required value="${esc(u.name)}" autocomplete="name"></label>
-          <label>Mobile<input name="phone" required inputmode="numeric" placeholder="98765 43210" autocomplete="tel"></label></div>
-          <label>Email<input name="email" type="email" required value="${esc(u.email || '')}" autocomplete="email"></label>
+          <div class="two"><label>Full name<input name="name" required value="${esc(b.attendee?.name || u.name)}" autocomplete="name"></label>
+          <label>Mobile<input name="phone" required inputmode="numeric" placeholder="98765 43210" value="${esc(b.attendee?.phone || '')}" autocomplete="tel"></label></div>
+          <label>Email<input name="email" type="email" required value="${esc(b.attendee?.email || u.email || '')}" autocomplete="email"></label>
         </fieldset>
-        ${free ? '' : `<fieldset><legend>Pay with</legend>
+        ${free ? '' : rzp ? `<fieldset><legend>Payment</legend>
+          <div class="pay-razorpay"><span style="font-size:26px">⚡</span><div><b>UPI · Cards · Netbanking · Wallets</b><span>Secure payment by Razorpay — you'll choose the method in the next step</span></div></div>
+          ${pay.mode === 'test' ? '<p class="test-banner"><b>Test mode</b> — no real money. Use UPI ID <code>success@razorpay</code>, or card <code>4111 1111 1111 1111</code> with any future expiry and any CVV.</p>' : ''}
+        </fieldset>` : `<fieldset><legend>Pay with</legend>
           <div class="pay-tabs" role="radiogroup">
             <label class="pay-opt"><input type="radio" name="method" value="upi" checked><span>⚡ UPI</span></label>
             <label class="pay-opt"><input type="radio" name="method" value="card"><span>▭ Card</span></label>
@@ -31,8 +49,8 @@ export async function checkout(el, id) {
           <div class="pay-panel" data-panel="netbanking" hidden><label>Bank<select name="bank"><option>HDFC Bank</option><option>ICICI Bank</option><option>State Bank of India</option><option>Axis Bank</option><option>Kotak Mahindra Bank</option></select></label></div>
         </fieldset>`}
         <p class="form-error" hidden></p>
-        <button class="btn primary big full" id="pay">${free ? 'Confirm free registration' : `Pay ${money(b.total)}`}</button>
-        <p class="demo-banner">Demo checkout — no real money moves. Plug in Razorpay/Stripe in <code>server.js</code> for live payments.</p>
+        <button class="btn primary big full" id="pay">${payLabel}</button>
+        ${!free && !rzp ? '<p class="demo-banner">Demo checkout — no real money moves. Add Razorpay keys on the server for real payments.</p>' : ''}
       </form>
     </div>
     <aside class="summary">
@@ -44,7 +62,7 @@ export async function checkout(el, id) {
       <a class="link" href="#/event/${e.id}" id="change">← Change tickets</a>
     </aside>
   </div>`;
-  const expires = new Date(b.expiresAt).getTime();
+  let expires = new Date(b.expiresAt).getTime();
   const tick = () => {
     const left = Math.max(0, expires - Date.now());
     const m = Math.floor(left / 60000), s = Math.floor(left / 1000) % 60;
@@ -55,16 +73,40 @@ export async function checkout(el, id) {
   const timer = setInterval(tick, 1000); tick();
   $$('input[name=method]').forEach(r => r.onchange = () => $$('.pay-panel').forEach(p => p.hidden = p.dataset.panel !== r.value));
   $('#change').onclick = () => api(`/bookings/${b.id}/cancel`, { method: 'POST' }).catch(() => {});
+  const btn = $('#pay');
+  const showError = msg => { const p = $('.form-error'); p.textContent = msg; p.hidden = !msg; };
+  const reset = () => { btn.disabled = false; btn.textContent = payLabel; };
+  const done = booking => { clearInterval(timer); toast('Booked! Your tickets are ready 🎉'); go('#/ticket/' + booking.id); };
+
   $('#pay-form').onsubmit = async ev => {
     ev.preventDefault();
+    showError('');
     const fd = Object.fromEntries(new FormData(ev.target));
-    const btn = $('#pay'); btn.disabled = true; btn.textContent = free ? 'Confirming…' : 'Processing payment…';
+    const attendee = { name: fd.name, email: fd.email, phone: fd.phone };
+    btn.disabled = true; btn.textContent = free ? 'Confirming…' : rzp ? 'Opening secure payment…' : 'Processing payment…';
     try {
-      const { booking } = await api(`/bookings/${b.id}/pay`, { method: 'POST', body: { method: free ? 'free' : fd.method, upiId: fd.upiId, cardNumber: fd.cardNumber, attendee: { name: fd.name, email: fd.email, phone: fd.phone } } });
-      clearInterval(timer);
-      toast('Booked! Your tickets are ready 🎉');
-      go('#/ticket/' + booking.id);
-    } catch (e) { const p = $('.form-error'); p.textContent = e.message; p.hidden = false; btn.disabled = false; btn.textContent = free ? 'Confirm free registration' : `Pay ${money(b.total)}`; }
+      if (free || !rzp) {
+        const { booking } = await api(`/bookings/${b.id}/pay`, { method: 'POST', body: { method: free ? 'free' : fd.method, upiId: fd.upiId, cardNumber: fd.cardNumber, attendee } });
+        return done(booking);
+      }
+      // Razorpay: 1) server creates the order  2) Checkout collects payment  3) server verifies the signature
+      const order = await api(`/bookings/${b.id}/order`, { method: 'POST', body: { attendee } });
+      if (order.expiresAt) expires = new Date(order.expiresAt).getTime();
+      await loadRazorpay();
+      const checkoutWidget = new window.Razorpay({
+        key: order.keyId, order_id: order.orderId, amount: order.amount, currency: order.currency,
+        name: order.name, description: order.description, prefill: order.prefill, notes: order.notes,
+        theme: { color: '#181a17' },
+        handler: async resp => {
+          btn.disabled = true; btn.textContent = 'Confirming your tickets…';
+          try { const { booking } = await api(`/bookings/${b.id}/pay`, { method: 'POST', body: resp }); done(booking); }
+          catch (err) { showError(err.message); reset(); }
+        },
+        modal: { ondismiss: () => { reset(); showError('Payment window closed — your seats are still held. Try again when ready.'); } },
+      });
+      checkoutWidget.on('payment.failed', r => { showError(`Payment failed: ${r.error?.description || 'please try another method'}`); reset(); });
+      checkoutWidget.open();
+    } catch (err) { showError(err.message); reset(); }
   };
   return () => clearInterval(timer);
 }

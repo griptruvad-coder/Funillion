@@ -597,3 +597,12 @@ dialog::backdrop{background:#10140fc0;backdrop-filter:blur(4px)}
   .footer>span:last-child{margin-left:0;width:100%}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+/* listed (external) events */
+.ticket-box.external .ext-links{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+.ticket-box.external .ext-links .btn{white-space:normal;text-align:center}
+.pay-razorpay{display:flex;align-items:center;gap:12px;border:1px solid var(--line);background:#fff;border-radius:10px;padding:14px}
+.pay-razorpay b{display:block}.pay-razorpay span{font-size:13px;color:var(--muted)}
+.test-banner{font-size:13px;background:#e8f0ff;border:1px solid #c9d8ff;color:#1d3a8a;border-radius:8px;padding:10px 12px}
+.admin-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px;margin:18px 0;display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between}
+.admin-card .kv{display:flex;gap:22px;flex-wrap:wrap}.admin-card .kv b{display:block;font:700 22px var(--head)}.admin-card .kv span{font-size:12px;color:var(--muted)}

@@ -16,11 +16,12 @@ const SOURCE_META = {
   meetlocal: { name: 'MeetLocal', kind: 'Community meetups', trust: 2 },
   organizer: { name: 'Organizer', kind: 'Submitted on Funillion', trust: 4 },
   import: { name: 'Web import', kind: 'Imported from organizer URL', trust: 2 },
+  google: { name: 'Google Events', kind: 'Found via Google — BookMyShow, District, AllEvents & more', trust: 2 },
 };
 
 // ---------- normalisation helpers ----------
 const CITY_ALIASES = {};
-for (const c of CITIES) for (const a of [c.id, c.name, c.short, c.state]) CITY_ALIASES[a.toLowerCase()] = c.id;
+for (const c of CITIES) for (const a of [c.id, c.name, c.short]) CITY_ALIASES[a.toLowerCase()] = c.id; // not states: Maharashtra has both Mumbai and Pune
 Object.assign(CITY_ALIASES, { 'new delhi': 'delhi', 'gurgaon': 'delhi', 'gurugram': 'delhi', 'noida': 'delhi', 'ncr': 'delhi', 'bombay': 'mumbai', 'navi mumbai': 'mumbai', 'thane': 'mumbai', 'bangalore': 'bengaluru', 'madras': 'chennai', 'calcutta': 'kolkata', 'cochin': 'kochi', 'ernakulam': 'kochi', 'north goa': 'goa', 'south goa': 'goa', 'panaji': 'goa', 'chandigarh tricity': 'chandigarh', 'mohali': 'chandigarh', 'secunderabad': 'hyderabad', 'cyberabad': 'hyderabad' });
 
 function resolveCity(...hints) {
@@ -154,8 +155,8 @@ function recompute(ev) {
   ev.description = recs.map(r => r.description || '').sort((a, b) => b.length - a.length)[0] || ev.description;
   ev.image = ev.image || recs.find(r => r.image)?.image || null;
   ev.organizer = ev.organizer || best.organizer;
-  const minSrcPrice = Math.min(...recs.map(r => r.priceMin ?? Infinity));
-  ev.priceMin = Math.min(minSrcPrice, ...ev.tiers.map(t => t.price));
+  const prices = [...recs.map(r => r.priceMin), ...ev.tiers.map(t => t.price)].filter(p => Number.isFinite(p));
+  ev.priceMin = ev.ticketing === 'funillion' && ev.tiers.length ? Math.min(...ev.tiers.map(t => t.price)) : prices.length ? Math.min(...prices) : null;
 }
 
 function newEventFromRecord(rec) {
@@ -164,8 +165,9 @@ function newEventFromRecord(rec) {
   const ev = {
     id, title: rec.title, category: rec.category, city: rec.city, area: rec.area?.name, zone: rec.area?.zone,
     venue: rec.venue, lat: rec.lat, lng: rec.lng, start: rec.start, durH: rec.durH,
-    tiers: (rec.tiers.length ? rec.tiers : [{ name: 'Entry', price: rec.priceMin || 0, capacity: 100, sold: 0 }]).map((t, i) => ({ id: `t${i}`, name: t.name, price: Math.max(0, +t.price || 0), capacity: Math.max(1, +t.capacity || 100), sold: Math.min(+t.sold || 0, +t.capacity || 100) })),
-    description: rec.description || '', organizer: rec.organizer || 'Independent organiser', organizerUserId: rec.organizerUserId || null,
+    ticketing: rec.external ? 'external' : 'funillion', links: [], address: rec.address || null, mapsUrl: rec.mapsUrl || null, approxLocation: rec.approxLocation || false, allDay: rec.allDay || false,
+    tiers: rec.external ? [] : (rec.tiers.length ? rec.tiers : [{ name: 'Entry', price: rec.priceMin || 0, capacity: 100, sold: 0 }]).map((t, i) => ({ id: `t${i}`, name: t.name, price: Math.max(0, +t.price || 0), capacity: Math.max(1, +t.capacity || 100), sold: Math.min(+t.sold || 0, +t.capacity || 100) })),
+    description: rec.description || '', organizer: rec.organizer || (rec.external ? null : 'Independent organiser'), organizerUserId: rec.organizerUserId || null,
     label: (tpl?.labels?.[0]) || rec.category.toUpperCase(), tags: tpl?.tags || [], image: rec.image || null,
     sources: [], status: 'live', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), stats: { views: 0, clicks: 0, saves: 0 },
   };
@@ -176,8 +178,17 @@ function attach(ev, rec) {
   const clean = { source: rec.source, sourceId: rec.sourceId, url: rec.url || null, title: rec.title, start: rec.start, durH: rec.durH, priceMin: rec.priceMin, description: rec.description, organizer: rec.organizer, image: rec.image, venue: rec.venue };
   const i = ev.sources.findIndex(s => s.source === rec.source && s.sourceId === rec.sourceId);
   if (i >= 0) ev.sources[i] = clean; else ev.sources.push(clean);
+  // external booking links (BookMyShow, District…) from every source, de-duplicated
+  ev.links ||= [];
+  for (const l of rec.links || []) if (!ev.links.some(x => x.url === l.url)) ev.links.push(l);
+  // an organiser listing the event on Funillion turns a "listed" event into a ticketed one
+  if (rec.source === 'organizer' && ev.ticketing !== 'funillion') {
+    ev.ticketing = 'funillion'; ev.organizer = rec.organizer || ev.organizer; ev.organizerUserId = rec.organizerUserId || ev.organizerUserId;
+    ev.tiers = (rec.tiers || []).map((t, k) => ({ id: `t${k}`, name: t.name, price: Math.max(0, +t.price || 0), capacity: Math.max(1, +t.capacity || 100), sold: 0 }));
+  }
+  ev.ticketing ||= 'funillion';
   // richer ticket info from a source upgrades the listing, but never resets Funillion's own sales
-  if (rec.tiers && rec.tiers.length > ev.tiers.length) {
+  if (ev.ticketing === 'funillion' && !rec.external && rec.tiers && rec.tiers.length > ev.tiers.length) {
     const sold = ev.tiers.reduce((s, t) => s + (t.fsold || 0), 0);
     if (!sold) ev.tiers = rec.tiers.map((t, k) => ({ id: `t${k}`, name: t.name, price: Math.max(0, +t.price || 0), capacity: Math.max(1, +t.capacity || 100), sold: Math.min(+t.sold || 0, +t.capacity || 100) }));
   }

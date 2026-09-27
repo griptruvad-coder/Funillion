@@ -1,4 +1,4 @@
-import { state, api, $, $$, esc, money, cat, city, poster, card, avatar, fmtDayLong, fmtTime, relDay, dayKey, requireAuth, toast, go, modal, closeModal, loading, errorBox } from '../core.js';
+import { state, api, $, $$, esc, money, cat, city, poster, card, avatar, fmtDayLong, fmtTime, relDay, dayKey, priceLabel, requireAuth, toast, go, modal, closeModal, loading, errorBox } from '../core.js';
 
 let map;
 export async function render(el, id) {
@@ -6,6 +6,7 @@ export async function render(el, id) {
   let e;
   try { ({ event: e } = await api('/events/' + id)); } catch (err) { return errorBox(el, err); }
   const c = cat(e.category);
+  const ext = e.ticketing === 'external';
   const qty = Object.fromEntries(e.tiers.map(t => [t.id, 0]));
   const past = new Date(e.start) < Date.now() - 30 * 60000;
   const end = new Date(new Date(e.start).getTime() + e.durH * 3600000);
@@ -18,30 +19,35 @@ export async function render(el, id) {
       <div class="event-titles">
         <span class="tag" style="background:${c.color};color:${c.ink}">${c.icon} ${esc(c.label.toUpperCase())}</span> ${e.fill >= 0.85 && !e.soldOut ? '<span class="tag hot">🔥 Almost sold out</span>' : ''} <span class="tag outline">Fun Score ${e.funScore}</span>
         <h1>${esc(e.title)}</h1>
-        <p class="muted">by ${esc(e.organizer)}</p>
+        <p class="muted">${e.organizer ? `by ${esc(e.organizer)}` : ext && e.bookingSource ? `Listed on ${esc(e.bookingSource)}` : ''}</p>
       </div>
       <div class="facts">
         <div><span>◷</span><div><b>${['Today', 'Tomorrow'].includes(relDay(e.start)) ? relDay(e.start) + ' · ' : ''}${fmtDayLong(e.start)}</b><small>${fmtTime(e.start)} – ${fmtTime(end)}${dayKey(end) !== dayKey(e.start) ? ' (next day)' : ''} · ${e.durH >= 20 ? Math.round(e.durH) + ' hours' : e.durH + (e.durH === 1 ? ' hr' : ' hrs')}</small></div></div>
-        <div><span>⌖</span><div><b>${esc(e.venue)}</b><small>${esc(e.area)}, ${esc(e.cityName)} · ${e.kmFromCentre} km from city centre</small></div></div>
-        <div><span>₹</span><div><b>${e.priceMin === 0 ? 'Free entry available' : 'From ' + money(e.priceMin)}</b><small>${e.tiers.length} ticket type${e.tiers.length > 1 ? 's' : ''} · instant e-ticket</small></div></div>
+        <div><span>⌖</span><div><b>${esc(e.venue)}</b><small>${e.address ? esc(e.address) : `${esc(e.area)}, ${esc(e.cityName)}`}${e.approxLocation ? '' : ` · ${e.kmFromCentre} km from city centre`}</small></div></div>
+        <div><span>₹</span><div><b>${e.priceMin === 0 ? 'Free entry available' : priceLabel(e)}</b><small>${ext ? `Book on ${esc(e.bookingSource || 'the organiser\'s site')}` : `${e.tiers.length} ticket type${e.tiers.length > 1 ? 's' : ''} · instant e-ticket`}</small></div></div>
       </div>
       ${e.friends.length || e.interestedCount ? `<div class="social-proof">${e.friends.map(f => avatar(f, 'sm')).join('')}<span>${e.friendCount ? `<b>${e.friendCount} friend${e.friendCount > 1 ? 's' : ''}</b> interested` : ''}${e.friendCount && e.interestedCount ? ' · ' : ''}${e.interestedCount ? `${e.interestedCount} people on Funillion interested` : ''}</span></div>` : ''}
-      <section class="block"><h2>About</h2><p class="prose">${esc(e.description)}</p><div class="chips wrap small">${(e.tags || []).map(t => `<span class="chip static">#${esc(t)}</span>`).join('')}</div></section>
-      <section class="block"><h2>Location</h2><div id="mini-map" class="mini-map"></div><a class="link" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${e.lat},${e.lng}">Open in Google Maps ↗</a></section>
+      <section class="block"><h2>About</h2><p class="prose">${esc(e.description || (ext ? 'Full details, line-up and prices are on the listing — use the booking links.' : ''))}</p><div class="chips wrap small">${(e.tags || []).map(t => `<span class="chip static">#${esc(t)}</span>`).join('')}</div></section>
+      <section class="block"><h2>Location</h2><div id="mini-map" class="mini-map"></div>${e.approxLocation ? '<p class="fine">Pin shows the approximate area — check the address above.</p>' : ''}<a class="link" target="_blank" rel="noopener" href="${e.mapsUrl ? esc(e.mapsUrl) : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(e.address || `${e.lat},${e.lng}`)}`}">Open in Google Maps ↗</a></section>
       <section class="block sources-block"><h2>✳ Where this listing comes from</h2>
         <p class="muted">Funillion found this event on ${e.sourceDetails.length} platform${e.sourceDetails.length > 1 ? 's' : ''}${e.sourceDetails.length > 1 ? ' and merged them into one clean listing — same event, no duplicates' : ''}.</p>
         <ul class="source-list">${e.sourceDetails.map(s => `<li><b>${esc(s.name)}</b><span>${esc(s.kind || '')}</span><em>“${esc(s.title)}”${s.priceMin != null ? ` · from ${money(s.priceMin)}` : ''}</em></li>`).join('')}</ul>
       </section>
     </div>
     <aside class="event-side">
-      <div class="ticket-box" id="ticket-box">
+      ${ext ? `<div class="ticket-box external">
+        <h3>${past ? 'This event has ended' : 'Get tickets'}</h3>
+        <p class="muted small">Tickets for this event are sold by the organiser's platform. You'll book there — Funillion helps you find it and plan it.</p>
+        <div class="ext-links">${(e.links.filter(l => l.type === 'tickets').length ? e.links.filter(l => l.type === 'tickets') : e.links).map((l, i) => `<a class="btn ${i ? 'ghost' : 'primary'} big full" target="_blank" rel="noopener sponsored" href="${esc(l.url)}" data-out="${esc(l.source)}">${l.type === 'tickets' ? 'Book on' : 'Details on'} ${esc(l.source || 'listing')} ↗</a>`).join('') || '<p class="muted">No booking link yet.</p>'}</div>
+        ${e.links.some(l => l.type !== 'tickets') && e.links.some(l => l.type === 'tickets') ? `<p class="fine">More info: ${e.links.filter(l => l.type !== 'tickets').map(l => `<a class="link" target="_blank" rel="noopener" href="${esc(l.url)}">${esc(l.source)}</a>`).join(' · ')}</p>` : ''}
+      </div>` : `<div class="ticket-box" id="ticket-box">
         <h3>${past ? 'This event has ended' : e.soldOut ? 'Sold out' : 'Get tickets'}</h3>
         ${e.tiers.map(t => `<div class="tier ${t.left ? '' : 'out'}"><div><b>${esc(t.name)}</b><span>${money(t.price)}${t.left <= 15 && t.left ? ` · <em>only ${t.left} left</em>` : ''}${!t.left ? ' · sold out' : ''}</span></div>
           <div class="stepper" data-tier="${t.id}"><button data-d="-1" aria-label="Fewer ${esc(t.name)}" ${past || !t.left ? 'disabled' : ''}>−</button><output>0</output><button data-d="1" aria-label="More ${esc(t.name)}" ${past || !t.left ? 'disabled' : ''}>+</button></div></div>`).join('')}
         <div class="ticket-total"><span>Total</span><b id="total">₹0</b></div>
         <button class="btn primary big full" id="book" disabled>Select tickets</button>
-        <p class="fine">Secure checkout · Free cancellation up to 24h before</p>
-      </div>
+        <p class="fine">Secure checkout${state.meta.payments?.provider === 'razorpay' ? ' by Razorpay' : ''} · Free cancellation up to 24h before</p>
+      </div>`}
       <div class="action-row">
         <button class="btn ghost ${e.saved ? 'is-saved' : ''}" data-save="${e.id}" data-label="1">${e.saved ? '♥ Saved' : '♡ Save'}</button>
         <button class="btn ghost" id="interested">${e.isInterested ? '★ Interested' : '☆ Interested'}</button>
@@ -61,20 +67,22 @@ export async function render(el, id) {
     $('#book').disabled = !count;
     $('#book').textContent = count ? (total ? `Book ${count} ticket${count > 1 ? 's' : ''} · ₹${total.toLocaleString('en-IN')}` : `Register ${count} · Free`) : 'Select tickets';
   };
-  $$('.stepper').forEach(s => s.onclick = ev => {
+  if (!ext) $$('.stepper').forEach(s => s.onclick = ev => {
     const b = ev.target.closest('button'); if (!b) return;
     const t = e.tiers.find(t => t.id === s.dataset.tier);
     qty[t.id] = Math.max(0, Math.min(t.left, 10, qty[t.id] + Number(b.dataset.d)));
     $('output', s).textContent = qty[t.id]; update();
   });
-  $('#book').onclick = async () => {
+  $('#book') && ($('#book').onclick = async () => {
     if (!requireAuth('Log in to book tickets')) return;
     $('#book').disabled = true; $('#book').textContent = 'Holding your seats…';
     try {
       const { booking } = await api('/bookings', { method: 'POST', body: { eventId: e.id, items: Object.entries(qty).filter(([, q]) => q).map(([tierId, q]) => ({ tierId, qty: q })) } });
       go('#/checkout/' + booking.id);
     } catch (err) { toast(err.message, 'error'); update(); }
-  };
+  });
+  // outbound booking clicks count as clicks for trending + organiser analytics
+  $$('[data-out]').forEach(a => a.addEventListener('click', () => navigator.sendBeacon?.(`/api/events/${e.id}/track`, new Blob([JSON.stringify({ type: 'click' })], { type: 'application/json' }))));
   $('#interested').onclick = async () => {
     if (!requireAuth('Log in so friends can see what you like')) return;
     const { interested } = await api(`/events/${e.id}/interested`, { method: 'POST' });

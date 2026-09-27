@@ -93,7 +93,7 @@ function showPlan(r, i) {
         if (s.type === 'break') return `<li class="t-break"><span>☕</span>${esc(s.text)} · ${Math.round(s.minutes / 5) * 5} min</li>`;
         const k = cat(s.category);
         return `<li class="t-event"><div class="t-time"><b>${esc(s.arrive)}</b><small>till ${esc(s.leave)}</small></div>
-          <a class="t-body" href="#/event/${s.eventId}"><span class="dot" style="--pc:${k.color};--pi:${k.ink}">${k.icon}</span><div><b>${esc(s.title)}</b><small>${esc(s.venue)}, ${esc(s.area)} · ${esc(s.tierName)} ${s.pricePerPerson ? money(s.pricePerPerson) + (c.people > 1 ? ' pp' : '') : '· Free'}</small>${s.why?.length ? `<em>${s.why.map(esc).join(' · ')}</em>` : ''}${s.leavesEarly ? '<em class="warn">Leave a little early to make the next stop</em>' : ''}</div></a></li>`;
+          <a class="t-body" href="#/event/${s.eventId}"><span class="dot" style="--pc:${k.color};--pi:${k.ink}">${k.icon}</span><div><b>${esc(s.title)}</b><small>${esc(s.venue)}, ${esc(s.area)} · ${s.priceUnknown ? 'price on listing (not counted in total)' : `${esc(s.tierName)} ${s.pricePerPerson ? money(s.pricePerPerson) + (c.people > 1 ? ' pp' : '') : '· Free'}`}</small>${s.why?.length ? `<em>${s.why.map(esc).join(' · ')}</em>` : ''}${s.leavesEarly ? '<em class="warn">Leave a little early to make the next stop</em>' : ''}</div></a></li>`;
       }).join('')}</ol>
       <div class="plan-actions">
         <a class="btn primary" href="#/event/${events[0].eventId}">Book first stop →</a>

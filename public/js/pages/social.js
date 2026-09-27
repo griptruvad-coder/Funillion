@@ -1,4 +1,4 @@
-import { state, api, $, $$, esc, money, cat, city, avatar, card, requireAuth, toast, go, modal, closeModal, loading, errorBox, relDay, fmtTime, timeAgo, debounce, poster } from '../core.js';
+import { state, api, $, $$, esc, money, priceLabel, cat, city, avatar, card, requireAuth, toast, go, modal, closeModal, loading, errorBox, relDay, fmtTime, timeAgo, debounce, poster } from '../core.js';
 
 export async function friends(el) {
   if (!requireAuth('Log in to find friends and plan together')) { el.innerHTML = `<div class="empty"><h3>Plans are better together</h3><p>Log in to add friends, see what they're into and make group plans.</p></div>`; return; }
@@ -24,7 +24,7 @@ export async function friends(el) {
       ${fr.outgoing.length ? `<p class="muted small">Pending: ${fr.outgoing.map(u => esc(u.name)).join(', ')}</p>` : ''}
       <h4>People you may know</h4>
       <div class="people">${fr.suggestions.map(u => `<div class="person">${avatar(u)}<div><b>${esc(u.name)}</b><small>${esc(u.cityName)}${u.mutual ? ` · ${u.mutual} mutual` : ''}</small></div><button class="btn small ghost" data-add="${u.id}">＋ Add</button></div>`).join('')}</div>
-      <p class="fine">Demo people accept requests instantly, so you can try group plans right away.</p>
+      ${state.meta.demo ? '<p class="fine">Demo people accept requests instantly, so you can try group plans right away.</p>' : ''}
     </aside>
   </div>`;
   const refresh = () => friends(el);
@@ -74,7 +74,7 @@ export async function group(el, id) {
         <form id="add-opt" class="add-opt"><label class="search small"><span>⌕</span><input id="opt-q" placeholder="Add an event: search comedy, bhajan, hackathon…" autocomplete="off"></label><div id="opt-results" class="opt-results"></div></form>
         <div class="options">${g.candidates.map(c => `<div class="option ${c.id === g.finalEventId ? 'final' : ''}">
           <a href="#/event/${c.id}" class="opt-poster">${poster(c, 'tiny')}</a>
-          <div class="opt-main"><a href="#/event/${c.id}"><b>${esc(c.title)}</b></a><small>${relDay(c.start)} · ${fmtTime(c.start)} · ${esc(c.area)} · ${c.priceMin ? 'from ' + money(c.priceMin) : 'Free'}</small>
+          <div class="opt-main"><a href="#/event/${c.id}"><b>${esc(c.title)}</b></a><small>${relDay(c.start)} · ${fmtTime(c.start)} · ${esc(c.area)} · ${priceLabel(c)}</small>
             <div class="voters">${c.voters.map(v => avatar(v, 'xs')).join('')}<span>${c.votes} vote${c.votes === 1 ? '' : 's'}${c === top && c.votes > 1 ? ' · leading' : ''}</span></div>
             <div class="vote-bar"><i style="width:${Math.round(100 * c.votes / Math.max(1, g.members.length))}%"></i></div></div>
           <div class="opt-actions"><button class="btn small ${c.myVote ? 'primary' : 'ghost'}" data-vote="${c.id}">${c.myVote ? '✓ Voted' : 'Vote'}</button>${isOwner && !g.finalEventId ? `<button class="btn small dark" data-final="${c.id}">Lock it in</button>` : ''}</div>

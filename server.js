@@ -13,6 +13,9 @@ const { runAggregation, ingest, resolveArea, SOURCE_META } = require('./server/a
 const feed = require('./server/feed');
 const planner = require('./server/planner');
 const { importFromUrl } = require('./server/importer');
+const payments = require('./server/payments');
+const google = require('./server/sources/google');
+const affiliate = require('./server/affiliate');
 const { istDayKey, addDaysKey, istHour, haversineKm } = require('./server/util');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -21,27 +24,73 @@ const HOLD_MINUTES = 10;
 const FEE_RATE = 0.05;
 
 // ---------------------------------------------------------------- boot
+// SEED_DEMO=off → production mode: no fake events, no demo people. Real events come from Google Events + organisers.
+// Default: demo ON locally, OFF on Railway. Force with SEED_DEMO=on / SEED_DEMO=off.
+const DEMO = process.env.SEED_DEMO === 'on' || (process.env.SEED_DEMO !== 'off' && !process.env.RAILWAY_ENVIRONMENT);
+const DEMO_SOURCES = new Set(['tickethub', 'devcircuit', 'meetlocal']);
+const ADMIN_EMAILS = new Set((process.env.ADMIN_EMAILS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
+const isAdmin = u => Boolean(u && (ADMIN_EMAILS.has(u.email) || (DEMO && !ADMIN_EMAILS.size)));
+
 let db = store.load();
 const reseed = process.argv.includes('--reseed');
 if (!db || reseed) {
-  console.log('› Building a fresh Funillion database…');
   db = store.empty();
-  const g = generateFeeds(20260927);
-  const s = runAggregation(db);
-  seedPeople(db, auth);
-  console.log(`› ${g.raw} raw listings from ${Object.keys(s.perSource).length} sources → ${s.totalEvents} unique events (${s.merged} duplicates merged)`);
-  store.save(db, true);
-} else {
-  const upcomingCount = feed.upcoming(db).length;
-  if (upcomingCount < 400) {
-    console.log('› Event calendar is getting old — pulling fresh feeds…');
-    generateFeeds(Date.now() % 1e6);
+  if (DEMO) {
+    console.log('› Building a demo Funillion database…');
+    const g = generateFeeds(20260927);
     const s = runAggregation(db);
-    seedBotActivity(db, Date.now() % 1e6);
-    console.log(`› ${s.created} new events, ${s.merged} duplicates merged`);
-    store.save(db, true);
-  }
+    seedPeople(db, auth);
+    console.log(`› ${g.raw} raw listings from ${Object.keys(s.perSource).length} sources → ${s.totalEvents} unique events (${s.merged} duplicates merged)`);
+  } else console.log('› Fresh production database (demo data off)');
+  store.save(db, true);
+} else if (!DEMO && !db.meta.demoPurged) {
+  purgeDemo(db); store.save(db, true);
+} else if (DEMO && feed.upcoming(db).length < 400) {
+  console.log('› Event calendar is getting old — pulling fresh demo feeds…');
+  generateFeeds(Date.now() % 1e6);
+  const s = runAggregation(db);
+  seedBotActivity(db, Date.now() % 1e6);
+  console.log(`› ${s.created} new events, ${s.merged} duplicates merged`);
+  store.save(db, true);
 }
+
+// Removes every fake event, demo person and anything that points at them. Real users and their data stay.
+function purgeDemo(db) {
+  const deadEvents = new Set(Object.values(db.events).filter(e => e.sources.length && e.sources.every(s => DEMO_SOURCES.has(s.source))).map(e => e.id));
+  const deadUsers = new Set(Object.values(db.users).filter(u => u.bot || u.username === 'demo').map(u => u.id));
+  for (const id of deadEvents) delete db.events[id];
+  for (const e of Object.values(db.events)) e.sources = e.sources.filter(s => !DEMO_SOURCES.has(s.source));
+  for (const [k, v] of Object.entries(db.sourceIndex)) if (deadEvents.has(v) || DEMO_SOURCES.has(k.split(':')[0])) delete db.sourceIndex[k];
+  for (const id of deadUsers) delete db.users[id];
+  for (const [t, sess] of Object.entries(db.sessions)) if (deadUsers.has(sess.userId)) delete db.sessions[t];
+  for (const u of Object.values(db.users)) u.friends = u.friends.filter(f => !deadUsers.has(f));
+  db.friendRequests = db.friendRequests.filter(r => !deadUsers.has(r.from) && !deadUsers.has(r.to));
+  db.interactions = db.interactions.filter(i => !deadUsers.has(i.userId) && !deadEvents.has(i.eventId));
+  for (const uid of Object.keys(db.saves)) { if (deadUsers.has(uid)) delete db.saves[uid]; else db.saves[uid] = db.saves[uid].filter(id => !deadEvents.has(id)); }
+  for (const [id, b] of Object.entries(db.bookings)) if (deadUsers.has(b.userId) || deadEvents.has(b.eventId)) delete db.bookings[id];
+  for (const [id, g] of Object.entries(db.groups)) {
+    g.members = g.members.filter(m => !deadUsers.has(m));
+    g.candidates = g.candidates.filter(c => !deadEvents.has(c.eventId)).map(c => ({ ...c, votes: c.votes.filter(v => !deadUsers.has(v)) }));
+    g.messages = g.messages.filter(m => !deadUsers.has(m.userId));
+    if (!g.members.length || deadUsers.has(g.ownerId)) delete db.groups[id];
+    else if (deadEvents.has(g.finalEventId)) g.finalEventId = null;
+  }
+  delete db.meta.aggregation;
+  db.meta.demoPurged = new Date().toISOString();
+  try { for (const f of ['tickethub', 'devcircuit', 'meetlocal']) fs.rmSync(path.join(store.DATA_DIR, 'sources', f + '.json'), { force: true }); } catch {}
+  console.log(`› Demo data removed: ${deadEvents.size} fake events, ${deadUsers.size} demo people`);
+}
+
+// Real events: Google Events via SerpApi, refreshed every SERPAPI_REFRESH_DAYS within the monthly budget
+async function refreshGoogle(force = false) {
+  if (!google.enabled()) return { skipped: 'SERPAPI_KEY not set' };
+  const r = await google.run(db, ingest, { force });
+  store.save(db);
+  if (!r.skipped) google.geocodePending(db).then(n => n && store.save(db)).catch(() => {});
+  return r;
+}
+setTimeout(() => refreshGoogle().catch(e => console.error('Google refresh failed', e.message)), 3000).unref();
+setInterval(() => refreshGoogle().catch(e => console.error('Google refresh failed', e.message)), 6 * 3600000).unref();
 
 // ---------------------------------------------------------------- helpers
 const send = (res, status, data, headers = {}) => {
@@ -80,7 +129,7 @@ function sweepHolds() {
 setInterval(() => { sweepHolds(); store.save(db); }, 60000).unref();
 // long-running servers (Railway) keep the calendar fresh without a restart
 setInterval(() => {
-  if (feed.upcoming(db).length < 400) { generateFeeds(Date.now() % 1e6); const s = runAggregation(db); seedBotActivity(db, Date.now() % 1e6); store.save(db); console.log(`› Refreshed feeds: ${s.created} new events`); }
+  if (DEMO && feed.upcoming(db).length < 400) { generateFeeds(Date.now() % 1e6); const s = runAggregation(db); seedBotActivity(db, Date.now() % 1e6); store.save(db); console.log(`› Refreshed feeds: ${s.created} new events`); }
 }, 6 * 3600000).unref();
 // Frontend on another domain (Netlify) proxies /api to this server, so its origin must be allowed
 const ALLOWED_HOSTS = new Set((process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean).map(o => { try { return new URL(o).host; } catch { return o; } }));
@@ -102,6 +151,7 @@ function eventFull(ev, viewer) {
     tiers: ev.tiers.map(t => ({ id: t.id, name: t.name, price: t.price, left: Math.max(0, t.capacity - t.sold), capacity: t.capacity })),
     sourceDetails: ev.sources.map(s => ({ source: s.source, name: SOURCE_META[s.source]?.name || s.source, kind: SOURCE_META[s.source]?.kind, url: s.url, title: s.title, priceMin: s.priceMin })),
     kmFromCentre: +haversineKm(ev, city).toFixed(1), cityName: city.name,
+    links: (ev.links || []).map(l => ({ source: l.source, type: l.type, url: affiliate.wrap(l.url) })), address: ev.address || null, mapsUrl: ev.mapsUrl || null, allDay: !!ev.allDay,
     interestedCount: new Set(interested.map(i => i.userId)).size,
     isInterested: viewer ? interested.some(i => i.userId === viewer.id) : false,
     similar,
@@ -127,6 +177,7 @@ function filterEvents(qs, viewer) {
     if (when === 'weekend' && !wk.has(day)) return false;
     if (when === 'week' && day > addDaysKey(today, 7)) return false;
     if (/^\d{4}-\d\d-\d\d$/.test(when) && day !== when) return false;
+    if (price !== 'all' && e.priceMin == null) return false; // unknown price only shows under "Any price"
     if (price === 'free' && e.priceMin !== 0) return false;
     if (/^\d+$/.test(price) && e.priceMin > Number(price)) return false;
     if (q) {
@@ -136,7 +187,7 @@ function filterEvents(qs, viewer) {
     return true;
   });
   if (sort === 'date') list.sort((a, b) => a.start.localeCompare(b.start));
-  else if (sort === 'price') list.sort((a, b) => a.priceMin - b.priceMin || a.start.localeCompare(b.start));
+  else if (sort === 'price') list.sort((a, b) => (a.priceMin ?? 1e9) - (b.priceMin ?? 1e9) || a.start.localeCompare(b.start));
   else if (sort === 'popular') list.sort((a, b) => feed.funScore(b) - feed.funScore(a));
   else if (viewer) { const ctx = { user: viewer, aff: feed.affinity(db, viewer), friends: feed.friendSignals(db, viewer) }; const sc = new Map(list.map(e => [e.id, feed.personalScore(e, ctx).score])); list.sort((a, b) => sc.get(b.id) - sc.get(a.id)); }
   else list.sort((a, b) => feed.funScore(b) - feed.funScore(a));
@@ -190,10 +241,10 @@ const route = (method, pattern, handler) => {
 };
 
 route('GET', '/api/health', () => ({ ok: true, events: feed.upcoming(db).length, users: Object.keys(db.users).length }));
-route('GET', '/api/meta', () => ({ cities: CITIES.map(({ id, name, short, state, lat, lng, areas }) => ({ id, name, short, state, lat, lng, areas: areas.map(a => ({ name: a.name, zone: a.zone })), count: feed.upcoming(db, id).length })), categories: CATEGORIES, sources: SOURCE_META, totals: { events: feed.upcoming(db).length, cities: CITIES.length } }));
+route('GET', '/api/meta', () => ({ cities: CITIES.map(({ id, name, short, state, lat, lng, areas }) => ({ id, name, short, state, lat, lng, areas: areas.map(a => ({ name: a.name, zone: a.zone })), count: feed.upcoming(db, id).length })), categories: CATEGORIES, sources: SOURCE_META, totals: { events: feed.upcoming(db).length, cities: CITIES.length }, payments: payments.publicConfig(), demo: DEMO, realEvents: google.enabled() }));
 
 // auth
-route('GET', '/api/me', ({ user }) => ({ user: auth.publicUser(user, user) }));
+route('GET', '/api/me', ({ user }) => ({ user: user ? { ...auth.publicUser(user, user), isAdmin: isAdmin(user) } : null, demo: DEMO }));
 route('POST', '/api/auth/signup', ({ body, res, ip }) => {
   rateLimit(ip);
   const err = auth.validateSignup(body); if (err) fail(400, err);
@@ -211,7 +262,8 @@ route('POST', '/api/auth/login', ({ body, res, ip }) => {
   return { user: auth.publicUser(u, u) };
 });
 route('POST', '/api/auth/demo', ({ res }) => {
-  const u = auth.findByLogin(db, 'demo');
+  const u = DEMO && auth.findByLogin(db, 'demo');
+  if (!u) fail(404, 'Demo account is not available');
   res.setHeader('set-cookie', auth.sessionCookie(auth.createSession(db, u.id), auth.SESSION_DAYS * 86400));
   return { user: auth.publicUser(u, u) };
 });
@@ -274,6 +326,7 @@ route('POST', '/api/bookings', ({ user, body }) => {
   need(user); sweepHolds();
   const ev = db.events[body.eventId] || fail(404, 'Event not found');
   if (new Date(ev.start) < Date.now() - 30 * 60000) fail(400, 'This event has already started');
+  if (ev.ticketing === 'external') fail(400, 'Tickets for this event are sold on the organiser\'s site — use the booking link on the event page');
   const items = (Array.isArray(body.items) ? body.items : []).filter(i => i && +i.qty > 0);
   if (!items.length) fail(400, 'Pick at least one ticket');
   const total = items.reduce((s, i) => s + +i.qty, 0);
@@ -292,39 +345,102 @@ route('POST', '/api/bookings', ({ user, body }) => {
   db.bookings[b.id] = b;
   return { booking: bookingView(b) };
 });
-function bookingView(b) { const ev = db.events[b.eventId]; return { ...b, event: ev ? feed.card(db, ev) : null, venue: ev?.venue }; }
+function bookingView(b) { const ev = db.events[b.eventId]; const { refundError, ...pub } = b; return { ...pub, event: ev ? feed.card(db, ev) : null, venue: ev?.venue }; }
 route('GET', '/api/bookings', ({ user }) => { need(user); sweepHolds(); return { items: Object.values(db.bookings).filter(b => b.userId === user.id && b.status !== 'expired' && b.status !== 'pending').sort((a, b) => (db.events[a.eventId]?.start || '').localeCompare(db.events[b.eventId]?.start || '')).map(bookingView) }; });
 route('GET', '/api/bookings/:id', ({ user, params }) => { need(user); sweepHolds(); const b = db.bookings[params.id]; if (!b || b.userId !== user.id) fail(404, 'Booking not found'); return { booking: bookingView(b) }; });
-route('POST', '/api/bookings/:id/pay', ({ user, params, body }) => {
+function cleanAttendee(a = {}) {
+  if (!a.name || String(a.name).trim().length < 2) fail(400, 'Enter the attendee name');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email || '')) fail(400, 'Enter a valid email for the ticket');
+  const phone = String(a.phone || '').replace(/\D/g, '').slice(-10);
+  if (!/^[6-9]\d{9}$/.test(phone)) fail(400, 'Enter a valid 10-digit Indian mobile number');
+  return { name: String(a.name).trim().slice(0, 60), email: String(a.email).trim().toLowerCase(), phone };
+}
+function reserve(b) { // re-take seats for a hold that expired before a late payment arrived
+  const ev = db.events[b.eventId]; if (!ev) return false;
+  for (const it of b.items) { const t = ev.tiers.find(t => t.id === it.tierId); if (!t || t.capacity - t.sold < it.qty) return false; }
+  for (const it of b.items) { const t = ev.tiers.find(t => t.id === it.tierId); t.sold += it.qty; t.fsold = (t.fsold || 0) + it.qty; }
+  return true;
+}
+function confirm(b, { method, paymentRef, source }) {
+  b.status = 'confirmed'; b.paidAt = new Date().toISOString(); b.method = method; b.paymentRef = paymentRef; b.confirmedVia = source;
+  delete b.refund; delete b.cancelledAt;
+  b.code ||= 'FN-' + crypto.randomBytes(4).toString('hex').toUpperCase();
+  delete b.expiresAt;
+  track(db.users[b.userId], b.eventId, 'book');
+}
+// Called by checkout verification AND by the webhook — must be idempotent
+async function settleRazorpayPayment(b, paymentId, source) {
+  if (b.status === 'confirmed') return b;
+  if (b.status === 'refunded') return b;
+  if (['expired', 'cancelled'].includes(b.status) && !reserve(b)) {
+    // paid after the seats were released and the event filled up → refund in full automatically
+    b.status = 'refunded'; b.paymentRef = paymentId; b.refund = b.total;
+    try { const r = await payments.refund(paymentId, b.total, { bookingId: b.id, reason: 'seats released before payment' }); b.refundId = r.id; b.refundStatus = r.status; }
+    catch (e) { b.refundStatus = 'failed'; b.refundError = e.message; console.error('Auto-refund failed', b.id, e.message); }
+    return b;
+  }
+  confirm(b, { method: 'razorpay', paymentRef: paymentId, source });
+  return b;
+}
+
+// Step 1 of paid checkout: validate attendee + create a Razorpay order
+route('POST', '/api/bookings/:id/order', async ({ user, params, body }) => {
   need(user); sweepHolds();
   const b = db.bookings[params.id]; if (!b || b.userId !== user.id) fail(404, 'Booking not found');
   if (b.status === 'expired') fail(410, 'Your hold expired — tickets were released. Please start again.');
   if (b.status !== 'pending') fail(400, 'This booking is already ' + b.status);
-  const a = body.attendee || {};
-  if (!a.name || String(a.name).trim().length < 2) fail(400, 'Enter the attendee name');
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email || '')) fail(400, 'Enter a valid email for the ticket');
-  if (!/^[6-9]\d{9}$/.test(String(a.phone || '').replace(/\D/g, '').slice(-10))) fail(400, 'Enter a valid 10-digit Indian mobile number');
-  if (!['upi', 'card', 'netbanking', 'free'].includes(body.method)) fail(400, 'Choose a payment method');
-  if (b.total > 0 && body.method === 'free') fail(400, 'Choose a payment method');
-  // DEMO GATEWAY — replace with Razorpay/Stripe order + signature verification in production
-  if (body.method === 'upi' && b.total > 0 && !/^[\w.\-]{2,}@[a-z]{2,}$/i.test(body.upiId || '')) fail(400, 'Enter a valid UPI ID (like name@okbank)');
+  b.attendee = cleanAttendee(body.attendee);
+  if (b.total === 0) return { provider: 'free' };
+  if (!payments.enabled()) return { provider: 'demo' };
+  if (!b.rzpOrderId) {
+    try { const order = await payments.createOrder(b, db.events[b.eventId]); b.rzpOrderId = order.id; }
+    catch (e) { console.error('Razorpay order failed', e.message); fail(502, 'Payment gateway is not responding — please try again'); }
+  }
+  // UPI approvals can take a few minutes — give the payment time before seats are released
+  b.expiresAt = new Date(Math.max(new Date(b.expiresAt).getTime(), Date.now() + 15 * 60000)).toISOString();
+  const ev = db.events[b.eventId];
+  return { provider: 'razorpay', keyId: payments.KEY_ID, orderId: b.rzpOrderId, amount: Math.round(b.total * 100), currency: 'INR', name: process.env.BRAND_NAME || 'Funillion', description: `${ev?.title || 'Tickets'} · ${b.items.map(i => `${i.qty}× ${i.name}`).join(', ')}`.slice(0, 250), prefill: { name: b.attendee.name, email: b.attendee.email, contact: '+91' + b.attendee.phone }, notes: { bookingId: b.id }, expiresAt: b.expiresAt };
+});
+
+// Step 2: confirm — free registration, verified Razorpay payment, or the demo gateway (only when no keys are set)
+route('POST', '/api/bookings/:id/pay', async ({ user, params, body }) => {
+  need(user); sweepHolds();
+  const b = db.bookings[params.id]; if (!b || b.userId !== user.id) fail(404, 'Booking not found');
+  if (b.status === 'confirmed') return { booking: bookingView(b) };
+  if (body.razorpay_payment_id) {
+    if (!payments.enabled()) fail(400, 'Online payments are not configured');
+    if (!b.rzpOrderId || body.razorpay_order_id !== b.rzpOrderId) fail(400, 'Payment does not match this booking');
+    if (!payments.verifyCheckout({ orderId: b.rzpOrderId, paymentId: body.razorpay_payment_id, signature: body.razorpay_signature })) fail(400, 'Payment verification failed. If money was deducted it will be refunded automatically.');
+    await settleRazorpayPayment(b, body.razorpay_payment_id, 'checkout');
+    if (b.status === 'refunded') fail(409, 'Sorry — the seats sold out before your payment completed. A full refund has been started.');
+    return { booking: bookingView(b) };
+  }
+  if (b.status === 'expired') fail(410, 'Your hold expired — tickets were released. Please start again.');
+  if (b.status !== 'pending') fail(400, 'This booking is already ' + b.status);
+  b.attendee = cleanAttendee(body.attendee || b.attendee);
+  if (b.total === 0) { confirm(b, { method: 'free', paymentRef: 'free_' + crypto.randomBytes(5).toString('hex'), source: 'free' }); return { booking: bookingView(b) }; }
+  if (payments.enabled()) fail(400, 'Complete the payment in the Razorpay window');
+  // DEMO GATEWAY — only used when RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are not set (local development)
+  if (!['upi', 'card', 'netbanking'].includes(body.method)) fail(400, 'Choose a payment method');
+  if (body.method === 'upi' && !/^[\w.\-]{2,}@[a-z]{2,}$/i.test(body.upiId || '')) fail(400, 'Enter a valid UPI ID (like name@okbank)');
   if (body.method === 'card' && !/^\d{16}$/.test(String(body.cardNumber || '').replace(/\s/g, ''))) fail(400, 'Enter a 16-digit card number');
-  b.status = 'confirmed'; b.paidAt = new Date().toISOString(); b.method = body.method;
-  b.paymentRef = 'pay_demo_' + crypto.randomBytes(5).toString('hex');
-  b.code = 'FN-' + crypto.randomBytes(4).toString('hex').toUpperCase();
-  b.attendee = { name: String(a.name).trim().slice(0, 60), email: String(a.email).toLowerCase(), phone: String(a.phone).replace(/\D/g, '').slice(-10) };
-  delete b.expiresAt;
-  track(user, b.eventId, 'book');
+  confirm(b, { method: body.method, paymentRef: 'pay_demo_' + crypto.randomBytes(5).toString('hex'), source: 'demo' });
   return { booking: bookingView(b) };
 });
-route('POST', '/api/bookings/:id/cancel', ({ user, params }) => {
+route('POST', '/api/bookings/:id/cancel', async ({ user, params }) => {
   need(user); const b = db.bookings[params.id]; if (!b || b.userId !== user.id) fail(404, 'Booking not found');
   if (!['confirmed', 'pending'].includes(b.status)) fail(400, 'Booking cannot be cancelled');
   const ev = db.events[b.eventId];
   const hoursLeft = ev ? (new Date(ev.start) - Date.now()) / 3600000 : 0;
   if (b.status === 'confirmed' && hoursLeft < 0) fail(400, 'Event already started');
+  const refundAmount = b.status === 'confirmed' ? (hoursLeft >= 24 ? b.subtotal : Math.round(b.subtotal * 0.5)) : 0;
+  // real money: start the refund first, cancel only if Razorpay accepted it
+  if (refundAmount > 0 && b.method === 'razorpay') {
+    try { const r = await payments.refund(b.paymentRef, refundAmount, { bookingId: b.id, reason: 'customer cancellation' }); b.refundId = r.id; b.refundStatus = r.status; }
+    catch (e) { console.error('Refund failed', b.id, e.message); fail(502, 'Could not start the refund right now — your booking is still active. Please try again in a few minutes.'); }
+  }
   releaseInventory(b);
-  b.refund = b.status === 'confirmed' ? (hoursLeft >= 24 ? b.subtotal : Math.round(b.subtotal * 0.5)) : 0;
+  b.refund = refundAmount;
   b.status = 'cancelled'; b.cancelledAt = new Date().toISOString();
   return { booking: bookingView(b) };
 });
@@ -465,8 +581,16 @@ route('POST', '/api/organizer/events', ({ user, body }) => {
   if (r.action === 'merged') { r.event.organizerUserId ||= user.id; r.event.lockedTitle = title; r.event.title = title; }
   return { event: feed.card(db, r.event), action: r.action, matchedTitle: r.matchedTitle, score: r.score };
 });
-route('GET', '/api/aggregation', () => ({ stats: db.meta.aggregation, sources: SOURCE_META }));
-route('POST', '/api/aggregation/run', ({ user }) => { need(user); return { stats: runAggregation(db) }; });
+route('GET', '/api/aggregation', ({ user }) => {
+  const g = google.enabled() ? { ...google.usage(db), limit: google.MONTHLY_LIMIT, refreshDays: google.REFRESH_DAYS, queriesPerCity: google.QUERIES.length, events: Object.values(db.events).filter(e => e.sources.some(s => s.source === 'google')).length } : null;
+  return { stats: db.meta.aggregation || null, google: g, sources: SOURCE_META, isAdmin: isAdmin(user), totalEvents: Object.keys(db.events).length, upcoming: feed.upcoming(db).length };
+});
+route('POST', '/api/sources/google/run', async ({ user }) => {
+  if (!isAdmin(user)) fail(403, 'Only admins can pull new events');
+  if (!google.enabled()) fail(400, 'Set SERPAPI_KEY on the server first');
+  return { result: await refreshGoogle(true) };
+});
+route('POST', '/api/aggregation/run', ({ user }) => { if (!isAdmin(user)) fail(403, 'Only admins can run aggregation'); return { stats: runAggregation(db) }; });
 
 // ---------------------------------------------------------------- static
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.json': 'application/json', '.webp': 'image/webp' };
@@ -482,18 +606,47 @@ function serveStatic(req, res, pathname) {
   });
 }
 
+// ---------------------------------------------------------------- razorpay webhook
+// Dashboard → Settings → Webhooks → URL: https://<railway-domain>/api/razorpay/webhook
+// Events: payment.captured, order.paid, refund.processed, refund.failed. Secret → RAZORPAY_WEBHOOK_SECRET
+function handleWebhook(req, res) {
+  const chunks = []; let size = 0;
+  req.on('data', c => { size += c.length; if (size < 1_000_000) chunks.push(c); });
+  req.on('end', async () => {
+    const raw = Buffer.concat(chunks);
+    if (!payments.verifyWebhook(raw, req.headers['x-razorpay-signature'])) { console.warn('Rejected Razorpay webhook: bad signature'); return send(res, 400, { error: 'bad signature' }); }
+    let evt; try { evt = JSON.parse(raw.toString('utf8')); } catch { return send(res, 400, { error: 'bad json' }); }
+    try {
+      const pay = evt.payload?.payment?.entity, ord = evt.payload?.order?.entity, rf = evt.payload?.refund?.entity;
+      const orderId = ord?.id || pay?.order_id;
+      const b = orderId && Object.values(db.bookings).find(x => x.rzpOrderId === orderId);
+      if (['payment.captured', 'order.paid'].includes(evt.event) && b && pay?.id) {
+        if (Math.round(b.total * 100) !== pay.amount) console.warn('Webhook amount mismatch for', b.id);
+        else await settleRazorpayPayment(b, pay.id, 'webhook');
+      }
+      if (evt.event?.startsWith('refund.') && rf) {
+        const rb = Object.values(db.bookings).find(x => x.refundId === rf.id || x.paymentRef === rf.payment_id);
+        if (rb) rb.refundStatus = rf.status;
+      }
+      store.save(db);
+    } catch (e) { console.error('Webhook handling error', e); }
+    send(res, 200, { ok: true });
+  });
+}
+
 // ---------------------------------------------------------------- server
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   if (!url.pathname.startsWith('/api/')) return serveStatic(req, res, url.pathname);
   res.setHeader('x-content-type-options', 'nosniff');
+  if (url.pathname === '/api/razorpay/webhook' && req.method === 'POST') return handleWebhook(req, res);
   const r = routes.find(r => r.method === req.method && r.re.test(url.pathname));
   if (!r) return send(res, 404, { error: 'Not found' });
   // CSRF guard: state-changing requests must come from this site (JSON + same origin)
   if (req.method !== 'GET') {
     const origin = req.headers.origin;
     let oh = null; try { oh = origin && new URL(origin).host; } catch {}
-    if (origin && oh !== req.headers.host && oh !== req.headers['x-forwarded-host'] && !ALLOWED_HOSTS.has(oh)) return send(res, 403, { error: 'Cross-site request blocked' });
+    if (origin && oh !== req.headers.host && oh !== req.headers['x-forwarded-host'] && !ALLOWED_HOSTS.has(oh)) { console.warn(`Blocked request from origin ${origin} — add it to ALLOWED_ORIGINS (currently: ${[...ALLOWED_HOSTS].join(', ') || 'not set'})`); return send(res, 403, { error: 'Cross-site request blocked' }); }
   }
   try {
     const m = url.pathname.match(r.re);
@@ -509,7 +662,8 @@ const server = http.createServer(async (req, res) => {
   }
 });
 server.listen(PORT, () => {
+  if (ALLOWED_HOSTS.size) console.log(`  Allowed frontend origins: ${[...ALLOWED_HOSTS].join(', ')}`);
   console.log(`\n  ✳ Funillion is live → http://localhost:${PORT}`);
-  console.log(`    Demo login: demo / funillion   ·   ${feed.upcoming(db).length} upcoming events across ${CITIES.length} cities\n`);
+  console.log(DEMO ? `    Demo login: demo / funillion   ·   ${feed.upcoming(db).length} upcoming events across ${CITIES.length} cities\n` : `    Production mode · ${feed.upcoming(db).length} upcoming events · Google Events ${google.enabled() ? 'ON' : 'OFF (set SERPAPI_KEY)'} · Payments: ${payments.mode()}\n`);
 });
 process.on('SIGINT', () => { store.save(db, true); process.exit(0); });

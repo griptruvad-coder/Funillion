@@ -1,4 +1,4 @@
-import { state, api, $, $$, esc, money, cat, city, relDay, fmtTime, loading } from '../core.js';
+import { state, api, $, $$, esc, money, priceLabel, cat, city, relDay, fmtTime, loading } from '../core.js';
 import { openCityPicker } from '../app.js';
 
 const f = { when: 'week', cat: 'all', price: 'all' };
@@ -31,14 +31,14 @@ export async function render(el) {
   const draw = () => {
     if (me) items.forEach(e => e.dist = km(me, e)), items.sort((a, b) => a.dist - b.dist);
     $('#mcount').textContent = `${items.length} events on the map`;
-    $('#mlist').innerHTML = items.length ? items.map(e => { const k = cat(e.category); return `<a class="map-item" href="#/event/${e.id}" data-id="${e.id}"><span class="dot" style="--pc:${k.color};--pi:${k.ink}">${k.icon}</span><div><b>${esc(e.title)}</b><small>${relDay(e.start)} · ${fmtTime(e.start)} · ${esc(e.area)}${e.dist != null ? ` · ${e.dist < 1 ? Math.round(e.dist * 1000) + ' m' : e.dist.toFixed(1) + ' km'} away` : ''}</small></div><em>${e.priceMin ? money(e.priceMin) : 'Free'}</em></a>`; }).join('') : '<div class="empty small"><p>No events match — try All dates.</p></div>';
+    $('#mlist').innerHTML = items.length ? items.map(e => { const k = cat(e.category); return `<a class="map-item" href="#/event/${e.id}" data-id="${e.id}"><span class="dot" style="--pc:${k.color};--pi:${k.ink}">${k.icon}</span><div><b>${esc(e.title)}</b><small>${relDay(e.start)} · ${fmtTime(e.start)} · ${esc(e.area)}${e.dist != null ? ` · ${e.dist < 1 ? Math.round(e.dist * 1000) + ' m' : e.dist.toFixed(1) + ' km'} away` : ''}</small></div><em>${priceLabel(e, true)}</em></a>`; }).join('') : '<div class="empty small"><p>No events match — try All dates.</p></div>';
     if (!map) return;
     layer.clearLayers(); markers.clear();
     const bounds = [];
     for (const e of items) {
       const k = cat(e.category);
       const m = L.marker([e.lat, e.lng], { icon: L.divIcon({ className: 'pin', html: `<span style="--pc:${k.color};--pi:${k.ink}"><i>${k.icon}</i></span>`, iconSize: [34, 34], iconAnchor: [17, 34], popupAnchor: [0, -30] }) })
-        .bindPopup(`<div class="pop"><small>${esc(k.label.toUpperCase())}</small><b>${esc(e.title)}</b><span>${relDay(e.start)} · ${fmtTime(e.start)}</span><span>${esc(e.venue)}, ${esc(e.area)}</span><span>${e.priceMin ? 'From ' + money(e.priceMin) : 'Free'}${e.friendCount ? ` · ${e.friendCount} friend${e.friendCount > 1 ? 's' : ''} interested` : ''}</span><a href="#/event/${e.id}">View & book →</a></div>`);
+        .bindPopup(`<div class="pop"><small>${esc(k.label.toUpperCase())}</small><b>${esc(e.title)}</b><span>${relDay(e.start)} · ${fmtTime(e.start)}</span><span>${esc(e.venue)}, ${esc(e.area)}</span><span>${priceLabel(e)}${e.friendCount ? ` · ${e.friendCount} friend${e.friendCount > 1 ? 's' : ''} interested` : ''}</span><a href="#/event/${e.id}">View & book →</a></div>`);
       m.addTo(layer); markers.set(e.id, m); bounds.push([e.lat, e.lng]);
     }
     if (me) { L.circleMarker([me.lat, me.lng], { radius: 9, color: '#fff', weight: 3, fillColor: '#2f6bff', fillOpacity: 1 }).addTo(layer).bindPopup('You are here'); bounds.push([me.lat, me.lng]); }

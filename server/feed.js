@@ -8,7 +8,7 @@ const HALF_LIFE_DAYS = 14;
 const catLabel = Object.fromEntries(CATEGORIES.map(c => [c.id, c.label]));
 
 function fillRatio(ev) { const cap = ev.tiers.reduce((s, t) => s + t.capacity, 0); const sold = ev.tiers.reduce((s, t) => s + t.sold, 0); return cap ? sold / cap : 0; }
-function isSoldOut(ev) { return ev.tiers.every(t => t.sold >= t.capacity); }
+function isSoldOut(ev) { return ev.ticketing !== 'external' && ev.tiers.length > 0 && ev.tiers.every(t => t.sold >= t.capacity); }
 
 function popularity(ev) {
   const f = fillRatio(ev);
@@ -85,7 +85,7 @@ function forYou(db, user, cityId, limit = 12) {
 
 function upcoming(db, cityId) {
   const now = Date.now();
-  return Object.values(db.events).filter(e => e.status === 'live' && (!cityId || e.city === cityId) && new Date(e.end || e.start).getTime() > now && new Date(e.start).getTime() > now - 2 * 3600000);
+  return Object.values(db.events).filter(e => e.status === 'live' && (!cityId || e.city === cityId) && new Date(e.end || e.start).getTime() > now && (new Date(e.start).getTime() > now - 2 * 3600000 || e.durH >= 20));
 }
 
 function weekendKeys() {
@@ -118,6 +118,8 @@ function card(db, ev, viewer, friendsMap) {
     start: ev.start, end: ev.end, durH: ev.durH, priceMin: ev.priceMin, label: ev.label, image: ev.image,
     fill: +fillRatio(ev).toFixed(2), soldOut: isSoldOut(ev), funScore: funScore(ev),
     sources: [...new Set(ev.sources.map(s => SOURCE_META[s.source]?.name || s.source))],
+    ticketing: ev.ticketing || 'funillion', bookingSource: ev.ticketing === 'external' ? (ev.links || []).find(l => l.type === 'tickets')?.source || (ev.links || [])[0]?.source || null : null,
+    approxLocation: ev.approxLocation === true || ev.approxLocation === 'failed',
     saved: viewer ? (db.saves[viewer.id] || []).includes(ev.id) : false,
     friends: fr, friendCount: f ? f.size : 0,
   };

@@ -14,6 +14,8 @@ export async function api(path, { method = 'GET', body } = {}) {
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ESC[c]);
 export const money = n => (n === 0 ? 'Free' : '₹' + Number(n).toLocaleString('en-IN'));
+// price shown on cards: listed events may not publish a price
+export const priceLabel = (e, short = false) => (e.priceMin == null ? (short ? 'See listing' : 'Price on listing') : e.priceMin === 0 ? 'Free' : (short ? '' : 'From ') + money(e.priceMin));
 const TZ = { timeZone: 'Asia/Kolkata' };
 export const fmtTime = d => new Date(d).toLocaleTimeString('en-IN', { ...TZ, hour: 'numeric', minute: '2-digit' }).replace(' ', ' ');
 export const fmtDay = d => new Date(d).toLocaleDateString('en-IN', { ...TZ, weekday: 'short', day: 'numeric', month: 'short' });
@@ -51,6 +53,13 @@ export function poster(e, cls = '') {
   return `<div class="poster typo ${cls}" style="--pc:${c.color};--pi:${c.ink};--tilt:${tilt}deg"><span class="poster-icon" aria-hidden="true">${c.icon}</span><span class="poster-title">${posterLines(e.title)}</span></div>`;
 }
 
+// "Cyber Hub" + "Cyber Hub, Gurugram" → "Cyber Hub, Gurugram" (no repeated names)
+export function place(e) {
+  const v = String(e.venue || ''), a = String(e.area || '');
+  if (!a || v.toLowerCase().includes(a.split(',')[0].toLowerCase())) return v || a;
+  if (a.toLowerCase().includes(v.toLowerCase())) return a;
+  return `${v}, ${a}`;
+}
 export function card(e, opts = {}) {
   const c = cat(e.category);
   const hot = !e.soldOut && e.fill >= 0.85;
@@ -65,9 +74,9 @@ export function card(e, opts = {}) {
       </div>
       <div class="card-meta"><span>${c.icon} ${esc(c.label.toUpperCase())}</span><span>${relDay(e.start)} · ${fmtTime(e.start)}</span></div>
       <h3>${esc(e.title)}</h3>
-      <p class="venue">⌖ ${esc(e.venue)}, ${esc(e.area)}</p>
+      <p class="venue">⌖ ${esc(place(e))}</p>
       ${reasons}${friends}
-      <div class="card-bottom"><strong>${e.priceMin === 0 ? 'Free' : 'From ' + money(e.priceMin)}</strong><span>${e.sources.length > 1 ? `✳ ${e.sources.length} platforms` : 'View ↗'}</span></div>
+      <div class="card-bottom"><strong>${priceLabel(e)}</strong><span>${e.ticketing === 'external' && e.bookingSource ? `on ${esc(e.bookingSource)} ↗` : e.sources.length > 1 ? `✳ ${e.sources.length} platforms` : 'View ↗'}</span></div>
     </a>
     <button class="bookmark ${e.saved ? 'is-saved' : ''}" data-save="${esc(e.id)}" aria-pressed="${e.saved}" aria-label="${e.saved ? 'Unsave' : 'Save'} ${esc(e.title)}">${e.saved ? '♥' : '♡'}</button>
   </article>`;
@@ -113,8 +122,8 @@ export function openAuth(mode = 'login', reason = '') {
         <p class="form-error" hidden></p>
         <button class="btn primary big">Log in</button>
       </form>
-      <div class="or"><span>or</span></div>
-      <button class="btn ghost big" id="demo-login">Try the demo account (Delhi)</button>`;
+      ${state.meta.demo ? `<div class="or"><span>or</span></div>
+      <button class="btn ghost big" id="demo-login">Try the demo account (Delhi)</button>` : ''}`;
     if (step === 'details') body = `
       <form id="signup-form" class="stack">
         <div class="two"><label>Your name<input name="name" autocomplete="name" required value="${esc(form.name || '')}"></label>

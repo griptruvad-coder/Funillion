@@ -15,29 +15,40 @@ export async function render(el, _, params) {
 
 async function aggregation(box) {
   loading(box);
-  const { stats: s, sources } = await api('/aggregation');
-  const srcs = Object.entries(s.perSource);
+  const { stats: s, google: g, isAdmin, totalEvents, upcoming } = await api('/aggregation');
+  const srcs = s ? Object.entries(s.perSource) : [];
+  const gl = g?.last;
   box.innerHTML = `
   <div class="agg">
     <p class="muted">Funillion pulls listings from every platform, normalises their different formats (city spellings, date formats, price fields), detects the same real-world event across sources and merges them into one clean listing.</p>
-    <div class="funnel">
-      ${srcs.map(([k, v]) => `<div class="src"><b>${esc(v.name)}</b><span>${esc(v.kind)}</span><em>${v.items.toLocaleString('en-IN')} listings</em></div>`).join('')}
-      <div class="arrow">→</div>
-      <div class="stage"><b>${s.raw.toLocaleString('en-IN')}</b><span>raw listings</span></div>
-      <div class="arrow">→</div>
-      <div class="stage"><b>${s.merged.toLocaleString('en-IN')}</b><span>duplicates merged</span></div>
-      <div class="arrow">→</div>
-      <div class="stage lime"><b>${s.totalEvents.toLocaleString('en-IN')}</b><span>unique events</span></div>
+    <div class="admin-card">
+      <div><p class="eyebrow">🔎 REAL EVENTS · GOOGLE EVENTS</p>
+        ${g ? `<p class="muted small">Searches Google Events for every city (${g.queriesPerCity} searches per city), which brings in BookMyShow, District, AllEvents, Insider & more. Refreshes every ${g.refreshDays} days.</p>` : '<p class="muted small">Not connected. Add <code>SERPAPI_KEY</code> to the server environment to pull real events for every city.</p>'}</div>
+      ${g ? `<div class="kv"><div><b>${g.events}</b><span>events from Google</span></div><div><b>${g.used || 0}/${g.limit}</b><span>searches this month</span></div><div><b>${gl ? timeAgo(gl.finishedAt) : '—'}</b><span>last refresh</span></div>${gl ? `<div><b>${gl.created || 0}</b><span>new last run</span></div>` : ''}</div>
+        ${isAdmin ? `<button class="btn dark" id="pull-google" ${g.running ? 'disabled' : ''}>${g.running ? 'Running…' : '↻ Pull real events now'}</button>` : ''}` : ''}
+      ${gl?.errors?.length ? `<p class="note" style="flex-basis:100%">⚠ ${gl.errors.slice(0, 3).map(esc).join(' · ')}</p>` : ''}
     </div>
-    <div class="agg-meta"><span>Last run ${timeAgo(s.ranAt)} · ${s.ms} ms</span><button class="btn dark small" id="rerun">↻ Re-run aggregation</button></div>
+    <p class="muted small">${upcoming.toLocaleString('en-IN')} upcoming events live · ${totalEvents.toLocaleString('en-IN')} in the database</p>
+    ${s ? `<div class="funnel">
+      ${srcs.map(([k, v]) => `<div class="src"><b>${esc(v.name)}</b><span>${esc(v.kind)}</span><em>${v.items.toLocaleString('en-IN')} listings</em></div>`).join('')}
+      <div class="arrow">→</div><div class="stage"><b>${s.raw.toLocaleString('en-IN')}</b><span>raw listings</span></div>
+      <div class="arrow">→</div><div class="stage"><b>${s.merged.toLocaleString('en-IN')}</b><span>duplicates merged</span></div>
+      <div class="arrow">→</div><div class="stage lime"><b>${s.totalEvents.toLocaleString('en-IN')}</b><span>unique events</span></div>
+    </div>
+    <div class="agg-meta"><span>Demo feeds · last run ${timeAgo(s.ranAt)} · ${s.ms} ms</span>${isAdmin ? '<button class="btn dark small" id="rerun">↻ Re-run aggregation</button>' : ''}</div>` : ''}
     <h3>How duplicates are caught</h3>
     <ol class="how"><li><b>Block</b> by city + day so only plausible pairs are compared.</li><li><b>Score</b> title similarity (word overlap + character trigrams, ignoring noise like “LIVE:” or “(2026 Edition)”), start-time gap (≤ 90 min), venue distance and category.</li><li><b>Merge</b> above 0.62: keep the cleanest title, longest description, richest ticket data, lowest price — and link every source.</li></ol>
-    <h3>Recent merges</h3>
+    ${s?.merges?.length ? `<h3>Recent merges</h3>
     <div class="table-wrap"><table class="tbl"><thead><tr><th>Incoming listing</th><th>From</th><th>Merged into</th><th>City</th><th>Match</th></tr></thead>
-    <tbody>${s.merges.slice(0, 30).map(m => `<tr><td>${esc(m.incoming)}</td><td>${esc(m.source)}</td><td><a class="link" href="#/event/${m.eventId}">${esc(m.into)}</a></td><td>${esc(city(m.city).short)}</td><td><span class="score" style="--s:${m.score}">${Math.round(m.score * 100)}%</span></td></tr>`).join('')}</tbody></table></div>
-    <p class="fine">Sources shown are demo feeds with realistic, differing schemas (see <code>data/sources/</code>). Swap in real APIs by writing one adapter each in <code>server/aggregator.js</code>.</p>
+    <tbody>${s.merges.slice(0, 30).map(m => `<tr><td>${esc(m.incoming)}</td><td>${esc(m.source)}</td><td><a class="link" href="#/event/${m.eventId}">${esc(m.into)}</a></td><td>${esc(city(m.city).short)}</td><td><span class="score" style="--s:${m.score}">${Math.round(m.score * 100)}%</span></td></tr>`).join('')}</tbody></table></div>` : ''}
   </div>`;
-  $('#rerun').onclick = async () => { $('#rerun').textContent = 'Running…'; const { stats } = await api('/aggregation/run', { method: 'POST' }); toast(`Done: ${stats.raw} listings checked · ${stats.created} new · ${stats.updated + stats.merged} matched existing`); aggregation(box); };
+  $('#rerun')?.addEventListener('click', async () => { $('#rerun').textContent = 'Running…'; const { stats } = await api('/aggregation/run', { method: 'POST' }); toast(`Done: ${stats.raw} listings checked · ${stats.created} new · ${stats.updated + stats.merged} matched existing`); aggregation(box); });
+  $('#pull-google')?.addEventListener('click', async () => {
+    const b = $('#pull-google'); b.disabled = true; b.textContent = 'Searching every city… (1–2 min)';
+    try { const { result } = await api('/sources/google/run', { method: 'POST' }); toast(result.skipped ? `Skipped: ${result.skipped}` : `Done: ${result.queries} searches · ${result.created} new events · ${result.merged} merged`); }
+    catch (e) { toast(e.message, 'error'); }
+    aggregation(box);
+  });
 }
 
 function create(box, draft = {}) {

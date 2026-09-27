@@ -1,2 +1,4 @@
 data/
 node_modules/
+_to_delete/
+.env

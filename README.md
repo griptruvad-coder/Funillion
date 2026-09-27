@@ -53,6 +53,30 @@ public/                single-page app (vanilla JS modules), Leaflet map, QR cod
 data/                  created on first run (db.json + sources/*.json)
 ```
 
+
+## Production setup (Railway)
+
+Set these in **Railway → service → Variables** (full list with comments in `.env.example`). Never put keys in the code — the repo is on GitHub.
+
+| Variable | What it does |
+|---|---|
+| `SERPAPI_KEY` | Turns on **real events** for all cities from Google Events (BookMyShow, District, AllEvents, Insider…). First pull runs ~3 s after deploy, then every 7 days. |
+| `ADMIN_EMAILS` | Your Funillion login email → you get the **"Pull real events now"** button (Organizer → Smart aggregation). |
+| `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | Real checkout. Use **test keys** (`rzp_test_…`) until real organisers list real events. Without keys the demo gateway is used. |
+| `RAZORPAY_WEBHOOK_SECRET` | Confirms bookings even if the buyer closes the tab after paying; tracks refunds. |
+| `ALLOWED_ORIGINS` | Your Netlify/custom domains (login breaks with 403 without it). |
+
+On Railway, demo data is **off by default**: the first deploy removes all fake events and demo people (Meera & co.) and keeps real accounts.
+
+**Razorpay webhook:** Dashboard → Settings → Webhooks → Add: URL `https://<railway-domain>/api/razorpay/webhook`, events `payment.captured`, `order.paid`, `refund.processed`, `refund.failed`, secret = `RAZORPAY_WEBHOOK_SECRET`.
+
+### Two kinds of events
+- **Listed** (from Google Events): Funillion shows facts + links; booking happens on BookMyShow/District/etc. ("Book on … ↗"). Add affiliate links with `AFFILIATE_TEMPLATES`.
+- **Ticketed on Funillion** (organisers who list with you): real checkout with Razorpay, QR e-tickets, refunds. Only these can be sold on Funillion.
+
+### Payment flow
+Server creates a Razorpay order → Razorpay Checkout collects UPI/card/netbanking → server verifies the HMAC signature → booking confirmed. A webhook confirms payments that arrive after the tab was closed; if the seats were released and sold meanwhile, the payment is **auto-refunded**. Cancellations refund via the Razorpay API (100% up to 24 h before, 50% after).
+
 ## Going live: what to swap in
 
 1. **Real event sources:** write one adapter per platform in `server/aggregator.js` (`adapters.yourSource = row => ({ ...normalised })`) that reads their API or a partner feed. The deduper and merger work as they are. Scrape only sites whose terms allow it.
