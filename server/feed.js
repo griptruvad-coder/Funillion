@@ -121,7 +121,7 @@ function card(db, ev, viewer, friendsMap) {
     sources: [...new Set(ev.sources.map(s => s.site || SOURCE_META[s.source]?.name || s.source))],
     ticketing: ev.ticketing || 'funillion', bookingSource: ev.ticketing === 'external' ? (ev.links || []).find(l => l.type === 'tickets')?.source || (ev.links || [])[0]?.source || null : null,
     approxLocation: ev.approxLocation === true || ev.approxLocation === 'failed', allDay: !!ev.allDay, online: !!ev.online,
-    hack: ev.hack ? { mode: ev.hack.mode, deadline: ev.hack.deadline, prize: ev.hack.prize } : null,
+    hack: ev.hack ? { mode: ev.hack.mode, deadline: ev.hack.deadline, prize: ev.hack.prize, ongoing: !!ev.hack.ongoing } : null,
     saved: viewer ? (db.saves[viewer.id] || []).includes(ev.id) : false,
     friends: fr, friendCount: f ? f.size : 0,
   };

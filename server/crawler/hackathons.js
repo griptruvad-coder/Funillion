@@ -179,7 +179,12 @@ function hackToRecord(h, site) {
   const title = decode(h.title).slice(0, 140);
   if (!title || !h.url) return { skip: 'incomplete' };
   const d = dates(h); if (!d) return { skip: 'no date' };
-  if (new Date(d.end).getTime() < Date.now()) return { skip: 'past' };
+  const now = Date.now();
+  if (new Date(d.end).getTime() < now) return { skip: 'past' };
+  // long-running hackathons (Devpost rolling challenges) often started in the past but are still open —
+  // clamp the start to now so they read as "live, register by <deadline>" instead of showing a stale past date at the top of the list
+  let ongoing = false;
+  if (new Date(d.start).getTime() < now) { d.start = new Date(now + 36e5).toISOString(); d.allDay = false; ongoing = true; }
   let durH = (new Date(d.end) - new Date(d.start)) / 3600000;
   if (!(durH > 0)) durH = 24;
   durH = Math.min(durH, 24 * 90);
@@ -188,7 +193,7 @@ function hackToRecord(h, site) {
   let online = h.mode === 'online' || (h.mode === 'hybrid' && !cityId);
   if (!online && !cityId) return { skip: 'outside our cities' };
   const deadline = h.deadline ? parseDate(h.deadline)?.iso || null : null;
-  const hack = { mode: online ? 'online' : h.mode, deadline, prize: h.prize || null, themes: (h.themes || []).slice(0, 5), registrations: Number.isFinite(+h.registrations) && h.registrations != null ? +h.registrations : null, platform: site.name };
+  const hack = { mode: online ? 'online' : h.mode, deadline, ongoing, prize: h.prize || null, themes: (h.themes || []).slice(0, 5), registrations: Number.isFinite(+h.registrations) && h.registrations != null ? +h.registrations : null, platform: site.name };
   const bits = [hack.prize && `Prizes: ${hack.prize}`, hack.themes.length && `Themes: ${hack.themes.join(', ')}`, deadline && `Registration closes ${new Date(deadline).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}`, h.org && `By ${decode(h.org)}`].filter(Boolean);
   const base = { source: 'crawl', site: site.name, sourceId: `${site.id}:${h.id}`, url: h.url, title, category: 'hackathons', start: d.start, durH: Math.round(durH * 10) / 10, allDay: d.allDay,
     tiers: [], priceMin: h.free === true ? 0 : null, description: bits.join(' · ').slice(0, 300), organizer: h.org ? decode(h.org).slice(0, 80) : null, image: null, external: true, hack,

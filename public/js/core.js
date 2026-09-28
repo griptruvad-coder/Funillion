@@ -63,7 +63,7 @@ export function place(e) {
 }
 const hackLine = e => {
   const h = e.hack; if (!h) return '';
-  const bits = [h.prize && `🏆 ${esc(String(h.prize).slice(0, 28))}`, h.deadline && new Date(h.deadline) > Date.now() && `⏳ Register by ${esc(fmtDay(h.deadline).replace(/^\w+, /, ''))}`].filter(Boolean);
+  const bits = [h.ongoing && '🟢 Live now', h.prize && `🏆 ${esc(String(h.prize).slice(0, 28))}`, h.deadline && new Date(h.deadline) > Date.now() && `⏳ Register by ${esc(fmtDay(h.deadline).replace(/^\w+, /, ''))}`].filter(Boolean);
   return bits.length ? `<p class="hack-line">${bits.join(' · ')}</p>` : '';
 };
 export function card(e, opts = {}) {
