@@ -28,10 +28,13 @@ function validateSignup({ name, username, email, password, city }) {
 
 function createUser(db, { name, username, email, password, city, interests = [], bot = false }) {
   const { salt, hash } = hashPassword(password);
+  const { INTEREST_IDS } = require('./interests');
   const user = {
     id: 'u_' + crypto.randomBytes(6).toString('hex'), name: String(name).trim().slice(0, 60), username: username.toLowerCase(), email: email.toLowerCase(),
-    salt, hash, city, interests: interests.filter(i => catIds.has(i)), friends: [], bot, createdAt: new Date().toISOString(),
+    salt, hash, city, interests: interests.filter(i => catIds.has(i) || INTEREST_IDS.has(i)), friends: [], bot, createdAt: new Date().toISOString(),
     avatarHue: Math.floor(Math.random() * 360),
+    // social matching / discovery profile — all opt-in, all coarse-grained (see server/geo.js)
+    homeArea: null, discoverable: true, verified: false,
   };
   db.users[user.id] = user;
   return user;
@@ -65,8 +68,8 @@ const sessionCookie = (token, maxAgeSec) => `fn_session=${token}; HttpOnly; Path
 
 function publicUser(u, viewer) {
   if (!u) return null;
-  const base = { id: u.id, name: u.name, username: u.username, city: u.city, avatarHue: u.avatarHue, initials: u.name.split(/\s+/).map(s => s[0]).join('').slice(0, 2).toUpperCase() };
-  if (viewer && viewer.id === u.id) return { ...base, email: u.email, interests: u.interests, friends: u.friends.length };
+  const base = { id: u.id, name: u.name, username: u.username, city: u.city, avatarHue: u.avatarHue, initials: u.name.split(/\s+/).map(s => s[0]).join('').slice(0, 2).toUpperCase(), verified: !!u.verified };
+  if (viewer && viewer.id === u.id) return { ...base, email: u.email, interests: u.interests, friends: u.friends.length, homeArea: u.homeArea, discoverable: u.discoverable !== false };
   return base;
 }
 

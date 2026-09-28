@@ -8,6 +8,9 @@ import * as plan from './pages/plan.js';
 import * as social from './pages/social.js';
 import * as organize from './pages/organize.js';
 import * as account from './pages/account.js';
+import * as create from './pages/create.js';
+import * as plans from './pages/plans.js';
+import * as communities from './pages/communities.js';
 
 const routes = [
   [/^#?\/?$/, () => (state.user ? discover.render : landing.render)],
@@ -18,6 +21,11 @@ const routes = [
   [/^#\/tickets$/, () => booking.tickets],
   [/^#\/map$/, () => mapPage.render],
   [/^#\/plan$/, () => plan.render],
+  [/^#\/create$/, () => create.render],
+  [/^#\/plans$/, () => plans.list],
+  [/^#\/plans\/([\w-]+)$/, () => plans.detail],
+  [/^#\/communities$/, () => communities.list],
+  [/^#\/communities\/([\w-]+)$/, () => communities.detail],
   [/^#\/friends$/, () => social.friends],
   [/^#\/group\/([\w-]+)$/, () => social.group],
   [/^#\/join\/([\w-]+)$/, () => social.join],
@@ -51,17 +59,20 @@ function renderHeader() {
   const u = state.user, c = city(state.city);
   const path = (location.hash || '#/').split('?')[0];
   const active = p => (path.startsWith(p) || (p === '#/discover' && (path === '#/' || path === '')) ? 'active' : '');
-  const links = [['#/discover', 'Discover', '✳'], ['#/map', 'Map', '⌖'], ['#/plan', 'Plan my day', '✦'], ['#/friends', 'Friends', '☺'], ['#/tickets', 'Tickets', '▤']];
+  // Main nav per the product spec: Discover / Plans / Create / Communities / Profile.
+  // Everything else (Map, Tickets, the older event-itinerary "Plan my day", Friends & event-groups,
+  // Organizer) stays fully reachable from the account menu below — nothing was removed.
+  const links = [['#/discover', 'Discover', '✳'], ['#/plans', 'Plans', '◎'], ['#/create', 'Create', '✦'], ['#/communities', 'Communities', '⌘'], ['#/me', 'Profile', '☺']];
   $('#header').innerHTML = `
     <a class="logo" href="#/">funillion<span>✳</span></a>
-    <nav class="top-nav">${links.map(([h, l]) => `<a class="nav ${active(h)}" href="${h}">${l}${h === '#/plan' ? ' <em>AI</em>' : ''}</a>`).join('')}</nav>
+    <nav class="top-nav">${links.map(([h, l]) => `<a class="nav ${active(h)}" href="${h}">${l}${h === '#/create' ? ' <em>AI</em>' : ''}</a>`).join('')}</nav>
     <button class="city-btn" id="city-btn" aria-haspopup="true">⌖ <span>${esc(c.short || 'Pick city')}</span> ▾</button>
     ${u ? `<a class="icon-btn" href="#/saved" aria-label="Saved events">♡</a>
       <div class="menu-wrap"><button class="avatar-btn" id="avatar-btn" aria-label="Account menu">${avatar(u)}</button>
       <div class="menu" id="user-menu" hidden><div class="menu-head"><b>${esc(u.name)}</b><span>@${esc(u.username)}</span></div>
-        <a href="#/me">Profile & interests</a><a href="#/saved">Saved events</a><a href="#/tickets">My tickets</a><a href="#/organize">Organizer & aggregation</a><button id="logout">Log out</button></div></div>`
+        <a href="#/me">Profile & interests</a><a href="#/saved">Saved events</a><a href="#/tickets">My tickets</a><a href="#/map">Map</a><a href="#/plan">AI Plan My Day (events)</a><a href="#/friends">Friends & event groups</a><a href="#/organize">Organizer & aggregation</a><button id="logout">Log out</button></div></div>`
       : `<button class="btn ghost small" id="login-btn">Log in</button><button class="btn primary small" id="signup-btn">Sign up</button>`}`;
-  $('#tabbar').innerHTML = links.map(([h, l, i]) => `<a class="${active(h)}" href="${h}"><span>${i}</span>${l.split(' ')[0]}</a>`).join('');
+  $('#tabbar').innerHTML = links.map(([h, l, i]) => `<a class="${active(h)}" href="${h}"><span>${i}</span>${l}</a>`).join('');
   $('#city-btn').onclick = openCityPicker;
   $('#login-btn')?.addEventListener('click', () => openAuth('login'));
   $('#signup-btn')?.addEventListener('click', () => openAuth('signup'));

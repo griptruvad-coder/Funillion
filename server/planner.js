@@ -5,13 +5,7 @@
 const { CITIES, CATEGORIES } = require('./catalog');
 const { istDayKey, addDaysKey, dowOfKey, istHour, haversineKm } = require('./util');
 const { affinity, friendSignals, personalScore, isSoldOut } = require('./feed');
-
-const DAY_WORDS = [
-  [0, ['sunday', 'sun', 'ravivar', 'itvaar', 'itwar', 'raviwar']], [1, ['monday', 'mon', 'somvar', 'somwar']], [2, ['tuesday', 'tue', 'tues', 'mangalvar', 'mangalwar']],
-  [3, ['wednesday', 'wed', 'budhvar', 'budhwar']], [4, ['thursday', 'thu', 'thurs', 'guruvar', 'guruwar', 'veervar']], [5, ['friday', 'fri', 'shukravar', 'shukrawar']],
-  [6, ['saturday', 'sat', 'shanivar', 'shaniwar']],
-];
-const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const nlp = require('./nlp');
 const CAT_WORDS = {
   comedy: ['comedy', 'standup', 'stand-up', 'stand up', 'hasi', 'hasna', 'funny', 'laugh', 'roast', 'improv'],
   music: ['music', 'concert', 'gig', 'gaana', 'gaane', 'band', 'live music', 'jazz', 'sufi', 'ghazal', 'indie'],
@@ -38,11 +32,6 @@ const VIBES = {
   nerd: { words: ['nerdy', 'tech', 'geek', 'career'], cats: ['hackathons', 'meetups', 'networking', 'workshops'] },
   family: { words: ['family', 'parents', 'mummy', 'papa', 'kids', 'bachche'], cats: ['festivals', 'food', 'arts', 'theatre', 'bhajan', 'screenings'] },
 };
-const TIME_WORDS = [
-  [['morning', 'subah', 'savere', 'breakfast'], 7, 12], [['afternoon', 'dopahar', 'lunch'], 12, 17],
-  [['evening', 'shaam', 'sham', 'sundown', 'sunset'], 17, 23], [['night', 'raat', 'tonight', 'late night', 'midnight'], 19, 26],
-  [['full day', 'pura din', 'whole day', 'all day', 'din bhar'], 9, 24],
-];
 const MUST_STAY = new Set(['theatre', 'screenings', 'comedy', 'workshops', 'openmic']);
 
 function parse(query, user) {
@@ -61,22 +50,12 @@ function parse(query, user) {
   const city = CITIES.find(x => x.id === c.city);
 
   // budget: ₹1000 / rs 1500 / 1.5k / 2000 rupees / budget 800 / under 500
-  let m = q.match(/(?:₹|rs\.?|inr|budget|under|below|within|max|upto|up to|andar)\s*([\d,.]+)\s*(k)?/) || q.match(/([\d,.]+)\s*(k)?\s*(?:₹|rs|rupees|rupaye|rupay|budget|inr)/);
-  if (m) { let v = parseFloat(m[1].replace(/,/g, '')); if (m[2]) v *= 1000; if (v >= 0 && v < 1e6) c.budget = Math.round(v); }
-  if (c.budget == null) { // bare amount like "4 log 5000"
-    for (const mm of q.matchAll(/(\d[\d,.]*)(k?)\s*([a-z]*)/g)) {
-      if (['am', 'pm', 'baje', 'log', 'people', 'ppl', 'friends', 'km', 'min', 'mins', 'st', 'nd', 'rd', 'th'].includes(mm[3]) || MONTHS.includes(mm[3])) continue;
-      const v = parseFloat(mm[1].replace(/,/g, '')) * (mm[2] ? 1000 : 1);
-      if (v >= 100) { c.budget = Math.round(v); break; }
-    }
-  }
-  if (/\bfree\b|muft|free mein|no money/.test(q) && c.budget == null) c.budget = 0;
+  let m;
+  c.budget = nlp.parseBudget(q);
 
   // people
-  if ((m = q.match(/(\d+)\s*(?:friends|dost|doston|buddies)/))) c.people = +m[1] + 1;
-  else if ((m = q.match(/(\d+)\s*(?:people|log|logo|ppl|persons|of us|members|jan)/))) c.people = +m[1];
-  else if ((m = q.match(/(?:group of|squad of|team of)\s*(\d+)/))) c.people = +m[1];
-  if (/\b(solo|alone|akela|akeli|myself)\b/.test(q)) c.people = 1;
+  c.people = nlp.parsePeopleCount(q) ?? c.people;
+  if (nlp.isSolo(q)) c.people = 1;
 
   // vibe
   for (const [name, v] of Object.entries(VIBES)) if (v.words.some(has)) { c.vibe = name; if (v.people && c.people === 1) c.people = v.people; break; }
@@ -84,25 +63,12 @@ function parse(query, user) {
   // date
   const today = istDayKey(new Date());
   const todayDow = dowOfKey(today);
-  if (/\b(today|aaj|tonight|abhi)\b/.test(q)) c.date = today;
-  else if (/\b(tomorrow|kal|tmrw|tmr)\b/.test(q)) c.date = addDaysKey(today, 1);
-  else if (/day after tomorrow|parso/.test(q)) c.date = addDaysKey(today, 2);
-  else if (/weekend/.test(q)) c.date = todayDow === 6 || todayDow === 0 ? today : addDaysKey(today, 6 - todayDow);
-  let namedDay = false;
-  if (!c.date) for (const [dow, words] of DAY_WORDS) if (words.some(has)) { c.date = addDaysKey(today, (dow - todayDow + 7) % 7); namedDay = true; break; }
-  if (!c.date && (m = q.match(/(\d{1,2})\s*(?:st|nd|rd|th)?\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/))) {
-    const y = +today.slice(0, 4), mo = MONTHS.indexOf(m[2]) + 1;
-    let key = `${y}-${String(mo).padStart(2, '0')}-${String(+m[1]).padStart(2, '0')}`; if (key < today) key = `${y + 1}${key.slice(4)}`; c.date = key;
-  }
-  if (!c.date) c.date = today;
+  const parsedDate = nlp.parseDateKey(q, has, today);
+  c.date = parsedDate ? parsedDate.date : today;
+  const namedDay = parsedDate ? parsedDate.namedDay : false;
 
   // time window
-  for (const [words, from, to] of TIME_WORDS) if (words.some(has)) { c.from = from; c.to = to; break; }
-  if ((m = q.match(/(?:after|baad|from|se)\s*(\d{1,2})(?::(\d\d))?\s*(am|pm|baje)?/)) || (m = q.match(/(\d{1,2})(?::(\d\d))?\s*(am|pm|baje)\s*(?:ke baad|onwards|se)/))) {
-    let h = +m[1]; if ((m[3] === 'pm' || (m[3] === 'baje' && h < 11)) && h < 12) h += 12; c.from = h + (+m[2] || 0) / 60; c.to = c.to && c.to > c.from ? c.to : 26;
-  }
-  if ((m = q.match(/(?:before|till|until|tak)\s*(\d{1,2})\s*(am|pm|baje)?/))) { let h = +m[1]; if ((m[2] === 'pm' || m[2] === 'baje') && h < 12) h += 12; if (m[2] === 'am' && h < 6) h += 24; c.to = h; if (c.from == null) c.from = 9; }
-  if (c.from == null) { c.from = 9; c.to = 26; }
+  Object.assign(c, nlp.parseTimeWindow(q, has));
   // "Sunday morning" asked on Sunday afternoon means next Sunday
   const nowH = istHour(new Date());
   if (namedDay && c.date === today && c.to <= nowH + 0.5) c.date = addDaysKey(today, 7);

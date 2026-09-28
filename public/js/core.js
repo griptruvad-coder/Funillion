@@ -123,7 +123,7 @@ function savePassword(id, password, name) {
 
 export function openAuth(mode = 'login', reason = '') {
   const cities = state.meta.cities;
-  const cats = state.meta.categories;
+  const cats = state.meta.interests || state.meta.categories;
   const form = { city: state.city || '', interests: [] };
   const render = (step = mode === 'login' ? 'login' : 'details') => {
     const tabs = `<div class="auth-tabs"><button class="${step === 'login' ? 'on' : ''}" data-step="login">Log in</button><button class="${step !== 'login' ? 'on' : ''}" data-step="details">Sign up</button></div>`;

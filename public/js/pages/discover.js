@@ -1,8 +1,33 @@
-import { state, api, $, $$, esc, city, cat, rail, card, go, loading, errorBox, debounce } from '../core.js';
+import { state, api, $, $$, esc, city, cat, avatar, money, rail, card, go, loading, errorBox, debounce } from '../core.js';
 import { openCityPicker } from '../app.js';
 
 const f = { q: '', cat: 'all', when: 'all', price: 'all', mode: '', sort: 'recommended' };
 let lastCity = null;
+
+// ---------- small teaser cards for the new social sections (Plans / People / Communities) ----------
+const fmtWhen = iso => new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+function planTeaser(p) {
+  return `<a class="suggest-card" href="#/plans/${p.id}" style="scroll-snap-align:start">
+    <div class="suggest-top"><h3>${esc(p.title)}</h3></div>
+    <div class="suggest-meta"><span>🕐 ${fmtWhen(p.startTime)}</span>${p.distanceLabel ? `<span>⌖ ${esc(p.distanceLabel)}</span>` : ''}</div>
+    ${p.reasons?.length ? `<div class="reasons">${p.reasons.map(r => `<span>${esc(r)}</span>`).join('')}</div>` : ''}
+    <div class="avatars"><span>${p.interestedCount}/${p.maxParticipants} going</span></div>
+  </a>`;
+}
+function personTeaser(r) {
+  const pct = Math.round(r.compatibility_score * 100);
+  return `<a class="suggest-card" href="#/plans" style="scroll-snap-align:start;align-items:flex-start">
+    <div class="suggest-top">${avatar(r.user)}<span class="compat" style="--s:${pct}">${pct}%</span></div>
+    <b style="font:600 15.5px var(--head)">${esc(r.user.name)}</b>
+    ${r.reasons?.length ? `<div class="reasons">${r.reasons.map(x => `<span>${esc(x)}</span>`).join('')}</div>` : ''}
+  </a>`;
+}
+function communityTeaser(c) {
+  return `<a class="community-card" href="#/communities/${c.id}" style="scroll-snap-align:start">
+    <div class="community-head"><span class="community-icon">${esc(c.icon || '✳')}</span><b style="font:600 16px var(--head)">${esc(c.name)}</b></div>
+    <p class="small muted">${c.memberCount} member${c.memberCount === 1 ? '' : 's'}${c.reasons?.[0] ? ' · ' + esc(c.reasons[0]) : ''}</p>
+  </a>`;
+}
 
 export async function render(el, _, params) {
   if (!state.city) { el.innerHTML = `<div class="empty"><h3>Pick a city to start</h3><p>Funillion is live across India.</p><button class="btn primary" id="pick">Choose city</button></div>`; $('#pick').onclick = openCityPicker; openCityPicker(); return; }
@@ -14,6 +39,12 @@ export async function render(el, _, params) {
   const c = city(state.city);
   const first = state.user ? state.user.name.split(' ')[0] : null;
   el.innerHTML = `
+    <section class="home-cta">
+      <p class="eyebrow">✦ TELL US WHAT YOU WANT TO DO</p>
+      <h2>${first ? `${esc(first)}, w` : 'W'}hat do you want to do today?</h2>
+      <form id="home-compose" class="compose-input"><input id="home-q" placeholder="e.g. Need 3 people for a café meetup under ₹500" autocomplete="off"><button class="btn primary">Find people ✦</button></form>
+      <div class="home-cta-row"><a class="btn im-free-btn" href="#/create">I'm Free</a><span class="muted small" style="color:#c5c9bb">Funillion finds compatible people nearby and turns it into a real plan.</span></div>
+    </section>
     <section class="disc-hero">
       <p class="eyebrow">GOOD PEOPLE. GREAT PLANS. ${esc(c.short.toUpperCase())}.</p>
       <div class="title-line"><h1>${first ? `${esc(first)}, what's the plan <em>in ${esc(c.short)}?</em>` : `What's the plan <em>in ${esc(c.short)}?</em>`}</h1><span class="edition">${c.count} EVENTS<br>NEXT 3 WEEKS</span></div>
@@ -59,19 +90,25 @@ export async function render(el, _, params) {
     const box = $('#shelves');
     if (filtersActive()) { box.innerHTML = ''; return; }
     try {
-      const [h, onl] = await Promise.all([api(`/home?city=${state.city}`), api('/events?city=online&cat=hackathons&sort=date&limit=12').catch(() => ({ items: [] }))]);
+      const [h, onl, sf] = await Promise.all([
+        api(`/home?city=${state.city}`), api('/events?city=online&cat=hackathons&sort=date&limit=12').catch(() => ({ items: [] })),
+        state.user ? api('/discover/feed').catch(() => null) : null,
+      ]);
       const t = h.trending;
       const tabs = [['tonight', 'Hot tonight 🔥'], ['weekend', 'This weekend'], ['sellingFast', 'Almost sold out'], ['free', 'Free today & tomorrow']].filter(([k]) => t[k].length);
       box.innerHTML = `
         <section class="plan-promo">
-          <div><p class="eyebrow">✦ AI PLAN MY DAY</p><h3>Tell us your budget, time and vibe.</h3></div>
+          <div><p class="eyebrow">✦ AI PLAN MY DAY (EVENTS)</p><h3>Tell us your budget, time and vibe.</h3></div>
           <form id="promo-form"><input id="promo-q" placeholder='"₹1000, Saturday evening, ${esc(c.areas[0]?.name || c.short)}"' aria-label="Describe your plan"><button class="btn primary">Plan it ✦</button></form>
         </section>
+        ${sf?.forYou.plans.length ? `<section class="section"><div class="section-head"><div><p class="eyebrow">REAL-WORLD PLANS</p><h2>Plans near you</h2></div><a class="link" href="#/plans">See all →</a></div><div class="rail">${sf.forYou.plans.map(planTeaser).join('')}</div></section>` : ''}
         ${h.forYou?.length ? `<section class="section"><div class="section-head"><div><p class="eyebrow">PICKED FOR ${esc(state.user.name.split(' ')[0].toUpperCase())}</p><h2>For you</h2></div><a class="link" href="#/me">Tune interests →</a></div>${rail(h.forYou, { reasons: true })}</section>` : ''}
         ${!state.user ? `<section class="signup-nudge"><div><b>Get a feed that knows you.</b><span>Log in for personalised picks, friends' plans and one-tap booking.</span></div><button class="btn primary" id="nudge">Sign up free</button></section>` : ''}
+        ${sf?.people.items.length ? `<section class="section"><div class="section-head"><div><p class="eyebrow">ONLY PEOPLE WHO OPTED IN</p><h2>People you may want to meet</h2></div></div><div class="rail">${sf.people.items.slice(0, 10).map(personTeaser).join('')}</div></section>` : ''}
         ${tabs.length ? `<section class="section"><div class="section-head"><div><p class="eyebrow">TRENDING NEAR YOU</p><h2>What ${esc(c.short)} is into</h2></div></div>
           <div class="tabs" role="tablist">${tabs.map(([k, l], i) => `<button role="tab" class="tab ${i ? '' : 'on'}" data-tab="${k}">${l}</button>`).join('')}</div>
           <div id="trend-rail">${rail(t[tabs[0][0]])}</div></section>` : ''}
+        ${sf?.forYou.communities.length ? `<section class="section"><div class="section-head"><div><p class="eyebrow">TURN IT INTO A REAL PLAN</p><h2>Communities for you</h2></div><a class="link" href="#/communities">See all →</a></div><div class="rail">${sf.forYou.communities.map(communityTeaser).join('')}</div></section>` : ''}
         ${onl.items.length ? `<section class="section"><div class="section-head"><div><p class="eyebrow">🌐 OPEN TO EVERYONE · DEVFOLIO, UNSTOP, DEVPOST & MORE</p><h2>Online hackathons</h2></div><a class="link" href="#/discover?cat=hackathons&mode=online">See all →</a></div>${rail(onl.items)}</section>` : ''}
         ${h.friendsGoing?.length ? `<section class="section"><div class="section-head"><div><p class="eyebrow">YOUR PEOPLE</p><h2>Friends are interested</h2></div><a class="link" href="#/friends">Plan together →</a></div>${rail(h.friendsGoing)}</section>` : ''}`;
       $$('[data-tab]', box).forEach(b => b.onclick = () => { $$('[data-tab]', box).forEach(x => x.classList.toggle('on', x === b)); $('#trend-rail').innerHTML = rail(t[b.dataset.tab]); });
@@ -79,6 +116,7 @@ export async function render(el, _, params) {
       $('#nudge')?.addEventListener('click', () => import('../core.js').then(m => m.openAuth('signup')));
     } catch {}
   }
+  $('#home-compose').onsubmit = e => { e.preventDefault(); const q = $('#home-q').value.trim(); if (q) go('#/create?q=' + encodeURIComponent(q)); else go('#/create'); };
   const apply = () => { f.q = $('#q').value.trim(); f.when = $('#when').value; f.price = $('#price').value; f.mode = $('#mode').value; loadShelves(); loadList(); };
   $('#searchbar').onsubmit = e => { e.preventDefault(); apply(); $('#listing').scrollIntoView({ behavior: 'smooth' }); };
   $('#q').oninput = debounce(apply, 350);

@@ -19,6 +19,17 @@ const crawler = require('./server/crawler/crawler');
 const affiliate = require('./server/affiliate');
 const seo = require('./server/seo');
 const { istDayKey, addDaysKey, istHour, haversineKm } = require('./server/util');
+const geo = require('./server/geo');
+const safety = require('./server/safety');
+const { INTERESTS, INTEREST_IDS } = require('./server/interests');
+const availability = require('./server/availability');
+const matching = require('./server/matching/compatibility');
+const plans = require('./server/plans/service');
+const intent = require('./server/plans/intent');
+const discovery = require('./server/discovery');
+const communities = require('./server/communities');
+const chat = require('./server/chat');
+const nlp = require('./server/nlp');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC = path.join(__dirname, 'public');
@@ -42,6 +53,19 @@ if (!db || reseed) {
     const g = generateFeeds(20260927);
     const s = runAggregation(db);
     seedPeople(db, auth);
+    // give demo people a real (if make-believe) area + weekly availability so distance/availability matching has signal
+    for (const u of Object.values(db.users).filter(u => u.bot)) {
+      const c = CITIES.find(x => x.id === u.city);
+      if (c?.areas?.length) u.homeArea = c.areas[Math.floor(Math.random() * c.areas.length)].name;
+      availability.add(db, u.id, { type: 'recurring', dayOfWeek: 1 + Math.floor(Math.random() * 5), startHour: 18, endHour: 23, source: 'manual', label: 'Weekday evenings' });
+      availability.add(db, u.id, { type: 'recurring', dayOfWeek: 6, startHour: 10, endHour: 23, source: 'manual', label: 'Weekend' });
+    }
+    communities.seedStarterCommunities(db, auth.findByLogin(db, 'demo'));
+    // give each starter community a few real members (by shared interest) so community-scoped matching has signal
+    for (const com of Object.values(db.communities)) {
+      const matchingBots = Object.values(db.users).filter(u => u.bot && u.interests.some(i => com.interestTags.includes(i)));
+      for (const b of matchingBots.slice(0, 5)) communities.join(db, com, b);
+    }
     console.log(`› ${g.raw} raw listings from ${Object.keys(s.perSource).length} sources → ${s.totalEvents} unique events (${s.merged} duplicates merged)`);
   } else console.log('› Fresh production database (demo data off)');
   store.save(db, true);
@@ -119,7 +143,7 @@ const send = (res, status, data, headers = {}) => {
   res.writeHead(status, { 'content-type': typeof data === 'string' && headers['content-type'] ? headers['content-type'] : 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers });
   res.end(body);
 };
-class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
+const { HttpError } = require('./server/errors');
 const fail = (status, msg) => { throw new HttpError(status, msg); };
 const need = user => user || fail(401, 'Please log in first');
 
@@ -264,7 +288,7 @@ const route = (method, pattern, handler) => {
 };
 
 route('GET', '/api/health', () => ({ ok: true, events: feed.upcoming(db).length, users: Object.keys(db.users).length }));
-route('GET', '/api/meta', () => ({ cities: CITIES.map(({ id, name, short, state, lat, lng, areas }) => ({ id, name, short, state, lat, lng, areas: areas.map(a => ({ name: a.name, zone: a.zone })), count: feed.upcoming(db, id, { online: false }).length })), categories: CATEGORIES, sources: SOURCE_META, totals: { events: feed.upcoming(db).length, cities: CITIES.length, online: feed.upcoming(db, 'online').length }, payments: payments.publicConfig(), demo: DEMO, realEvents: google.enabled() }));
+route('GET', '/api/meta', () => ({ cities: CITIES.map(({ id, name, short, state, lat, lng, areas }) => ({ id, name, short, state, lat, lng, areas: areas.map(a => ({ name: a.name, zone: a.zone })), count: feed.upcoming(db, id, { online: false }).length })), categories: CATEGORIES, interests: INTERESTS, sources: SOURCE_META, totals: { events: feed.upcoming(db).length, cities: CITIES.length, online: feed.upcoming(db, 'online').length }, payments: payments.publicConfig(), demo: DEMO, realEvents: google.enabled() }));
 
 // auth
 route('GET', '/api/me', ({ user }) => ({ user: user ? { ...auth.publicUser(user, user), isAdmin: isAdmin(user) } : null, demo: DEMO }));
@@ -296,9 +320,11 @@ route('POST', '/api/auth/logout', ({ req, res }) => {
 });
 route('PATCH', '/api/me', ({ user, body }) => {
   need(user);
-  if (body.city) { if (!CITIES.some(c => c.id === body.city)) fail(400, 'Unknown city'); user.city = body.city; }
-  if (Array.isArray(body.interests)) user.interests = body.interests.filter(i => CATEGORIES.some(c => c.id === i));
+  if (body.city) { if (!CITIES.some(c => c.id === body.city)) fail(400, 'Unknown city'); user.city = body.city; user.homeArea = null; }
+  if (Array.isArray(body.interests)) user.interests = body.interests.filter(i => CATEGORIES.some(c => c.id === i) || INTEREST_IDS.has(i));
   if (body.name && String(body.name).trim().length >= 2) user.name = String(body.name).trim().slice(0, 60);
+  if (body.homeArea !== undefined) { if (body.homeArea === null || body.homeArea === '') user.homeArea = null; else { if (!geo.findArea(user.city, body.homeArea)) fail(400, 'Unknown area for your city'); user.homeArea = body.homeArea; } }
+  if (body.discoverable !== undefined) user.discoverable = !!body.discoverable;
   return { user: auth.publicUser(user, user) };
 });
 
@@ -485,9 +511,131 @@ route('POST', '/api/plan', async ({ user, body }) => {
   const result = planner.optimize(db, user, c);
   result.parser = c.parser || 'funillion-nlp';
   result.dateLabel = planner.fmtDay(result.constraints.date);
-  if (user) { const id = 'pl_' + crypto.randomBytes(5).toString('hex'); db.plans[id] = { id, userId: user.id, query, at: new Date().toISOString(), constraints: result.constraints }; result.id = id; }
+  if (user) { const id = 'iq_' + crypto.randomBytes(5).toString('hex'); db.itineraryQueries[id] = { id, userId: user.id, query, at: new Date().toISOString(), constraints: result.constraints }; result.id = id; }
   return result;
 });
+
+// ---------------------------------------------------------------- social plans (Create-a-Plan)
+// "Tell us what you want to do" -> parse intent -> match & rank people -> invite -> chat -> confirm.
+// The LLM (intent.llmParseIntent) only ever returns plain JSON; everything below is deterministic.
+const myPlan = (user, id) => {
+  const p = db.plans[id]; if (!p) fail(404, 'Plan not found');
+  const isParticipant = p.participants.some(x => x.userId === user.id);
+  if (!isParticipant && (p.visibility === 'private' || (p.visibility === 'community_only' && !plans.inCommunity(db, p.communityId, user.id)))) fail(404, 'Plan not found');
+  return p;
+};
+route('POST', '/api/plans/parse-intent', async ({ user, body }) => {
+  need(user);
+  const text = String(body.text || '').slice(0, 400);
+  if (text.trim().length < 3) fail(400, 'Describe what you want to do first');
+  let parsed = intent.parseIntent(text, user);
+  if (!body.noLlm) parsed = (await intent.llmParseIntent(text, parsed)) || parsed;
+  return { intent: parsed };
+});
+route('POST', '/api/plans', async ({ user, body }) => {
+  need(user);
+  let parsed;
+  if (body.text) {
+    parsed = intent.parseIntent(String(body.text).slice(0, 400), user);
+    if (!body.noLlm) parsed = (await intent.llmParseIntent(body.text, parsed)) || parsed;
+  } else {
+    parsed = {
+      activity: body.activity || null, interests: Array.isArray(body.interests) ? body.interests.filter(i => INTEREST_IDS.has(i)) : [],
+      date: /^\d{4}-\d\d-\d\d$/.test(body.date) ? body.date : istDayKey(new Date()),
+      time_range: Array.isArray(body.time_range) && body.time_range.length === 2 ? body.time_range : ['18:00', '21:00'],
+      budget: nlp.cleanBudget(body.budget),
+      participants_needed: Math.max(2, Math.min(30, +body.participants_needed || 3)), radius_km: Math.max(0.5, Math.min(50, +body.radius_km || 5)),
+      city: user.city, raw: body.description || '', parser: 'manual',
+    };
+  }
+  if (body.overrides) for (const k of ['activity', 'date', 'time_range', 'budget', 'participants_needed', 'radius_km']) if (body.overrides[k] !== undefined) parsed[k] = body.overrides[k];
+  const communityId = body.communityId && db.communities[body.communityId] ? body.communityId : null;
+  if (communityId && !db.communities[communityId].members.some(m => m.userId === user.id)) fail(403, 'Join the community first');
+  const visibility = ['public', 'community_only', 'private', 'verified_only'].includes(body.visibility) ? body.visibility : (communityId ? 'community_only' : 'public');
+  const plan = plans.createPlan(db, user, parsed, { communityId, visibility });
+  plans.inviteTopCandidates(db, plan);
+  return { plan: plans.view(db, plan, user.id) };
+});
+route('GET', '/api/plans', ({ user }) => {
+  need(user); plans.sweep(db);
+  const mine = Object.values(db.plans).filter(p => p.participants.some(x => x.userId === user.id)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return { items: mine.map(p => plans.view(db, p, user.id)) };
+});
+route('GET', '/api/plans/:id', ({ user, params }) => { need(user); plans.sweep(db); const p = myPlan(user, params.id); return { plan: plans.view(db, p, user.id), messages: chat.listMessages(db, p.conversationId).map(m => ({ ...m, user: auth.publicUser(db.users[m.userId]) })) }; });
+route('POST', '/api/plans/:id/join', ({ user, params }) => { need(user); plans.sweep(db); const p = myPlan(user, params.id); plans.join(db, p, user); return { plan: plans.view(db, p, user.id) }; });
+route('POST', '/api/plans/:id/leave', ({ user, params }) => { need(user); const p = myPlan(user, params.id); plans.leave(db, p, user.id); return { ok: true }; });
+route('POST', '/api/plans/:id/respond', ({ user, params, body }) => { need(user); const p = myPlan(user, params.id); plans.respond(db, p, user.id, !!body.accept); return { plan: plans.view(db, p, user.id) }; });
+route('POST', '/api/plans/:id/finalize', ({ user, params }) => { need(user); const p = myPlan(user, params.id); plans.finalize(db, p, user.id); return { plan: plans.view(db, p, user.id) }; });
+route('POST', '/api/plans/:id/cancel', ({ user, params }) => { need(user); const p = myPlan(user, params.id); plans.cancel(db, p, user.id); return { plan: plans.view(db, p, user.id) }; });
+route('POST', '/api/plans/:id/no-show', ({ user, params, body }) => { need(user); const p = myPlan(user, params.id); plans.markNoShow(db, p, user.id, body.userId); return { ok: true }; });
+route('POST', '/api/plans/:id/messages', ({ user, params, body }) => {
+  need(user); const p = myPlan(user, params.id);
+  if (!p.participants.some(x => x.userId === user.id && x.status === 'accepted')) fail(403, 'Join the plan to chat');
+  if (!p.conversationId) p.conversationId = chat.createConversation(db, 'plan', p.id);
+  const msg = chat.postMessage(db, p.conversationId, user.id, body.text) || fail(400, 'Empty message');
+  return { message: { ...msg, user: auth.publicUser(user) } };
+});
+route('POST', '/api/plans/:id/time-options', ({ user, params, body }) => { need(user); const p = myPlan(user, params.id); const opt = plans.addTimeOption(db, p, user.id, body.start, body.end); return { plan: plans.view(db, p, user.id), option: opt }; });
+route('POST', '/api/plans/:id/time-options/:optId/vote', ({ user, params }) => { need(user); const p = myPlan(user, params.id); plans.voteTimeOption(db, p, user.id, params.optId); return { plan: plans.view(db, p, user.id) }; });
+
+// matching
+route('GET', '/api/matching/users', ({ user, qs }) => {
+  need(user); plans.sweep(db);
+  const limit = Math.min(50, +qs.get('limit') || 20);
+  const activityId = qs.get('activity') || null;
+  const radiusKm = Math.max(0.5, Math.min(50, Number(qs.get('radiusKm')) || 5));
+  const viewerPt = geo.userPoint(user);
+  // Same-city + radius first (a soft distance *score* alone would still rank someone 1000km away
+  // above a mediocre nearby match) — radius_km is a real constraint, not just a scoring input.
+  const pool = Object.values(db.users).filter(u => {
+    if (u.id === user.id || u.discoverable === false || u.username === 'demo') return false;
+    if (u.city !== user.city) return false;
+    const pt = geo.userPoint(u);
+    return !viewerPt || !pt || geo.approxDistanceKm(viewerPt, pt) <= radiusKm * 1.4;
+  });
+  const ranked = matching.rankCandidates(db, user, pool, { activityId, radiusKm }, limit);
+  return { items: ranked.map(r => ({ ...r, user: auth.publicUser(db.users[r.user_id]) })) };
+});
+
+// availability
+route('POST', '/api/availability', ({ user, body }) => { need(user); const row = availability.add(db, user.id, body); return { availability: row }; });
+route('GET', '/api/availability/me', ({ user }) => { need(user); return { items: availability.listFor(db, user.id) }; });
+route('DELETE', '/api/availability/:id', ({ user, params }) => { need(user); availability.remove(db, user.id, params.id); return { ok: true }; });
+
+// discovery
+route('GET', '/api/discover/feed', ({ user }) => { need(user); return discovery.feedFor(db, user); });
+route('POST', '/api/discover/im-free', async ({ user, body }) => { need(user); return discovery.imFree(db, user, body); });
+
+// safety: block / report / discoverability (discoverability itself is PATCH /api/me, above)
+route('GET', '/api/blocked', ({ user }) => { need(user); return { items: [...safety.blockedIds(db, user.id)].map(id => auth.publicUser(db.users[id])).filter(Boolean) }; });
+route('POST', '/api/users/:id/block', ({ user, params }) => { need(user); if (!db.users[params.id]) fail(404, 'User not found'); safety.blockUser(db, user.id, params.id); return { ok: true }; });
+route('POST', '/api/users/:id/unblock', ({ user, params }) => { need(user); safety.unblockUser(db, user.id, params.id); return { ok: true }; });
+route('POST', '/api/reports', ({ user, body }) => {
+  need(user);
+  if (!['user', 'plan', 'community', 'message'].includes(body.targetType)) fail(400, 'Unknown report target');
+  if (!body.targetId) fail(400, 'Missing targetId');
+  const r = safety.reportUser(db, { reporterId: user.id, targetType: body.targetType, targetId: body.targetId, reason: body.reason, note: body.note });
+  return { report: { id: r.id, status: r.status } };
+});
+
+// communities
+const myCommunity = id => db.communities[id] || fail(404, 'Community not found');
+route('GET', '/api/communities', ({ user }) => ({ items: communities.list(db, user).map(c => communities.view(db, c, user?.id)) }));
+route('POST', '/api/communities', ({ user, body }) => { need(user); const c = communities.create(db, user, body); return { community: communities.view(db, c, user.id) }; });
+route('GET', '/api/communities/:id', ({ user, params }) => { const c = myCommunity(params.id); if (c.visibility === 'private' && !c.members.some(m => m.userId === user?.id)) fail(404, 'Community not found'); return { community: communities.view(db, c, user?.id) }; });
+route('POST', '/api/communities/:id/join', ({ user, params }) => { need(user); const c = myCommunity(params.id); communities.join(db, c, user); return { community: communities.view(db, c, user.id) }; });
+route('POST', '/api/communities/:id/leave', ({ user, params }) => { need(user); const c = myCommunity(params.id); communities.leave(db, c, user.id); return { ok: true }; });
+route('GET', '/api/communities/:id/plans', ({ user, params }) => { need(user); plans.sweep(db); const c = myCommunity(params.id); return { items: communities.plansFor(db, c.id).map(p => plans.view(db, p, user.id)) }; });
+route('POST', '/api/communities/:id/posts', ({ user, params, body }) => { need(user); const c = myCommunity(params.id); const p = communities.post(db, c, user, body); return { post: { ...p, author: auth.publicUser(user) } }; });
+route('POST', '/api/communities/:id/moderators', ({ user, params, body }) => { need(user); const c = myCommunity(params.id); communities.setModerator(db, c, user.id, body.userId, !!body.moderator); return { community: communities.view(db, c, user.id) }; });
+route('POST', '/api/communities/:id/messages', ({ user, params, body }) => {
+  need(user); const c = myCommunity(params.id);
+  if (!c.members.some(m => m.userId === user.id)) fail(403, 'Join the community to chat');
+  if (!c.conversationId) c.conversationId = chat.createConversation(db, 'community', c.id);
+  const msg = chat.postMessage(db, c.conversationId, user.id, body.text) || fail(400, 'Empty message');
+  return { message: { ...msg, user: auth.publicUser(user) } };
+});
+route('GET', '/api/communities/:id/messages', ({ user, params }) => { need(user); const c = myCommunity(params.id); if (!c.members.some(m => m.userId === user.id)) fail(403, 'Join the community to see chat'); return { items: chat.listMessages(db, c.conversationId).map(m => ({ ...m, user: auth.publicUser(db.users[m.userId]) })) }; });
 
 // friends
 route('GET', '/api/friends', ({ user }) => {
