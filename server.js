@@ -4,6 +4,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 
 const store = require('./server/db');
 const auth = require('./server/auth');
@@ -18,6 +19,8 @@ const google = require('./server/sources/google');
 const crawler = require('./server/crawler/crawler');
 const affiliate = require('./server/affiliate');
 const seo = require('./server/seo');
+const cityDirectory = require('./server/cities');
+const movies = require('./server/movies').createMovieService();
 const { istDayKey, addDaysKey, istHour, haversineKm } = require('./server/util');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -100,7 +103,7 @@ const CRAWLER_ON = process.env.CRAWLER === 'on' || (!DEMO && process.env.CRAWLER
 const CRAWL_EVERY_H = Number(process.env.CRAWL_INTERVAL_HOURS) || 12;
 async function runCrawler(force = false, only) {
   if (!CRAWLER_ON && !force) return { skipped: 'crawler off' };
-  const last = db.crawl?.lastRun ? new Date(db.crawl.lastRun).getTime() : 0;
+  const last = db.crawl?.lastNationwideRun ? new Date(db.crawl.lastNationwideRun).getTime() : 0;
   if (!force && Date.now() - last < CRAWL_EVERY_H * 3600000) return { skipped: 'fresh' };
   const r = await crawler.run(db, ingest, { only });
   store.save(db);
@@ -110,12 +113,19 @@ async function runCrawler(force = false, only) {
 if (CRAWLER_ON) {
   setTimeout(() => runCrawler().catch(e => console.error('Crawler failed', e.message)), 20000).unref();
   setInterval(() => runCrawler().catch(e => console.error('Crawler failed', e.message)), 3600000).unref();
+  setInterval(async () => {
+    if (crawler.isRunning() || !db.crawl?.cityQueue?.length) return;
+    const cityIds = db.crawl.cityQueue.splice(0, 4);
+    try { await crawler.run(db, ingest, { cityIds }); store.save(db); }
+    catch (e) { console.error('City event refresh failed', e.message); db.crawl.cityQueue.push(...cityIds); store.save(db); }
+  }, 60000).unref();
 }
 setInterval(() => refreshGoogle().catch(e => console.error('Google refresh failed', e.message)), 6 * 3600000).unref();
 
 // ---------------------------------------------------------------- helpers
 const send = (res, status, data, headers = {}) => {
-  const body = typeof data === 'string' || Buffer.isBuffer(data) ? data : JSON.stringify(data);
+  let body = typeof data === 'string' || Buffer.isBuffer(data) ? data : JSON.stringify(data);
+  if (Buffer.byteLength(body) > 2048 && /\bgzip\b/.test(res.req?.headers['accept-encoding'] || '')) { body = zlib.gzipSync(body); headers = { ...headers, 'content-encoding': 'gzip', vary: 'Accept-Encoding' }; }
   res.writeHead(status, { 'content-type': typeof data === 'string' && headers['content-type'] ? headers['content-type'] : 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers });
   res.end(body);
 };
@@ -264,7 +274,32 @@ const route = (method, pattern, handler) => {
 };
 
 route('GET', '/api/health', () => ({ ok: true, events: feed.upcoming(db).length, users: Object.keys(db.users).length }));
-route('GET', '/api/meta', () => ({ cities: CITIES.map(({ id, name, short, state, lat, lng, areas }) => ({ id, name, short, state, lat, lng, areas: areas.map(a => ({ name: a.name, zone: a.zone })), count: feed.upcoming(db, id, { online: false }).length })), categories: CATEGORIES, sources: SOURCE_META, totals: { events: feed.upcoming(db).length, cities: CITIES.length, online: feed.upcoming(db, 'online').length }, payments: payments.publicConfig(), demo: DEMO, realEvents: google.enabled() }));
+function cityCounts() {
+  const counts = new Map();
+  for (const event of feed.upcoming(db)) if (!event.online && event.city !== 'online') counts.set(event.city, (counts.get(event.city) || 0) + 1);
+  return counts;
+}
+const publicCity = (c, counts) => ({ id: c.id, name: c.name, short: c.short, state: c.state, lat: c.lat, lng: c.lng, areas: c.areas.map(a => ({ name: a.name, zone: a.zone })), count: counts.get(c.id) || 0 });
+route('GET', '/api/meta', () => {
+  const counts = cityCounts();
+  return { cities: CITIES.map(c => publicCity(c, counts)), states: [...new Set(CITIES.map(c => c.state))].sort(), categories: CATEGORIES, sources: SOURCE_META, totals: { events: feed.upcoming(db).length, cities: CITIES.length, online: feed.upcoming(db, 'online').length }, payments: payments.publicConfig(), demo: DEMO, realEvents: google.enabled(), movies: { connected: movies.configured() } };
+});
+route('GET', '/api/cities', ({ qs }) => {
+  const counts = cityCounts(), limit = Math.max(1, Math.min(60, Number(qs.get('limit')) || 60));
+  return { items: cityDirectory.searchCities((qs.get('q') || '').slice(0, 80), (qs.get('state') || '').slice(0, 120), limit).map(c => publicCity(c, counts)), totalCities: CITIES.length };
+});
+route('POST', '/api/cities/:id/events/refresh', ({ params, ip }) => {
+  rateLimit(`city:${ip}`);
+  if (!cityDirectory.findCity(params.id)) fail(400, 'Unknown city');
+  if (!CRAWLER_ON) return { status: 'disabled', message: 'City event discovery runs on the production server.' };
+  const status = crawler.requestCity(db, params.id);
+  store.save(db);
+  return { status };
+});
+const movieAction = async action => { try { return await action(); } catch (e) { if (e.status) fail(e.status, e.message); throw e; } };
+route('GET', '/api/movies', ({ qs, ip }) => { rateLimit(`movies:${ip}`); return movieAction(() => movies.load(Object.fromEntries(qs))); });
+route('POST', '/api/movies/book', ({ body, ip }) => { rateLimit(`movie-book:${ip}`); return movieAction(() => movies.book(body)); });
+route('POST', '/api/movies/preferences', ({ body, ip }) => { rateLimit(`movie-ai:${ip}`); if (typeof body.query !== 'string' || !body.query.trim() || body.query.length > 600) fail(400, 'Describe your movie plan in up to 600 characters.'); return movieAction(() => movies.preferences(body.query)); });
 
 // auth
 route('GET', '/api/me', ({ user }) => ({ user: user ? { ...auth.publicUser(user, user), isAdmin: isAdmin(user) } : null, demo: DEMO }));
@@ -305,6 +340,7 @@ route('PATCH', '/api/me', ({ user, body }) => {
 // discovery
 route('GET', '/api/home', ({ user, qs }) => {
   const city = qs.get('city') || user?.city || 'delhi';
+  if (CRAWLER_ON && cityDirectory.findCity(city)) crawler.requestCity(db, city);
   const friendsMap = user ? feed.friendSignals(db, user) : null;
   const c = e => feed.card(db, e, user, friendsMap);
   const t = feed.trending(db, city);
@@ -317,6 +353,8 @@ route('GET', '/api/home', ({ user, qs }) => {
   return out;
 });
 route('GET', '/api/events', ({ user, qs }) => {
+  const requestedCity = qs.get('city') || user?.city;
+  if (CRAWLER_ON && cityDirectory.findCity(requestedCity)) crawler.requestCity(db, requestedCity);
   const list = filterEvents(qs, user);
   const offset = Math.max(0, +qs.get('offset') || 0), limit = Math.min(60, +qs.get('limit') || 24);
   const friendsMap = user ? feed.friendSignals(db, user) : null;

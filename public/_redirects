@@ -1,4 +1,5 @@
 # Netlify → Railway (keeps login cookies first-party; SEO pages are rendered by the server)
+/cities       https://funillion-production.up.railway.app/cities          200!
 /api/*        https://funillion-production.up.railway.app/api/:splat        200!
 /in/*         https://funillion-production.up.railway.app/in/:splat         200!
 /e/*          https://funillion-production.up.railway.app/e/:splat          200!

@@ -92,7 +92,7 @@ function toRecord(item, queryCity, queryCat, now) {
   if (!when) return null;
   const address = Array.isArray(item.address) ? item.address : [];
   const addrText = address.join(', ');
-  // trust the address; an address outside our 14 cities is skipped rather than mislabelled
+  // trust the address; an address outside the Indian city directory is skipped rather than mislabelled
   const cityId = address.length ? resolveCity(address[address.length - 1], addrText) : queryCity.id;
   const city = CITIES.find(c => c.id === cityId);
   if (!city) return null;
@@ -150,10 +150,13 @@ async function run(db, ingest, { force = false, log = console.log } = {}) {
   if (!force && u.lastRun && u.last?.queries > 0 && Date.now() - new Date(u.lastRun).getTime() < REFRESH_DAYS * 86400000) return { skipped: 'fresh', lastRun: u.lastRun };
   u.running = true;
   const stats = { startedAt: new Date().toISOString(), queries: 0, results: 0, created: 0, merged: 0, updated: 0, skipped: 0, errors: [] };
-  const cities = CITIES.filter(c => !CITY_FILTER.length || CITY_FILTER.includes(c.id));
+  const eligible = CITIES.filter(c => !CITY_FILTER.length || CITY_FILTER.includes(c.id));
+  const start = Number(u.cityCursor) || 0, batch = Math.min(eligible.length, Math.max(1, Number(process.env.SERPAPI_CITIES_PER_RUN) || 12));
+  const cities = Array.from({ length: batch }, (_, i) => eligible[(start + i) % eligible.length]);
   const now = new Date();
   try {
     outer: for (const city of cities) {
+      u.cityCursor = (eligible.indexOf(city) + 1) % eligible.length;
       for (const tpl of QUERIES) {
         if (u.used >= MONTHLY_LIMIT) { stats.errors.push(`Monthly limit ${MONTHLY_LIMIT} reached — raise SERPAPI_MONTHLY_LIMIT on a paid plan`); break outer; }
         const q = tpl.replace('{city}', city.id === 'delhi' ? 'Delhi' : city.short);

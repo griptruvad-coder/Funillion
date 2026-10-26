@@ -1,4 +1,4 @@
-import { state, api, $, $$, esc, money, cat, city, avatar, requireAuth, toast, go, modal, closeModal } from '../core.js';
+import { state, api, $, $$, esc, money, cat, city, avatar, requireAuth, toast, go, modal, closeModal, cityField, mountCityField } from '../core.js';
 
 const EXAMPLES = [
   '₹1000 budget, Saturday evening, South Delhi',
@@ -53,7 +53,7 @@ function show(r) {
   <section class="understood">
     <div class="u-head"><p class="eyebrow">UNDERSTOOD AS</p><span class="muted small">Parsed by ${r.parser === 'claude' ? 'Claude' : 'Funillion NLP'} · tweak anything and re-plan</span></div>
     <form id="tweak" class="tweak">
-      <label>City<select name="city">${state.meta.cities.map(x => `<option value="${x.id}" ${x.id === c.city ? 'selected' : ''}>${esc(x.short)}</option>`).join('')}</select></label>
+      ${cityField('plan-city', c.city)}
       <label>Date<input type="date" name="date" value="${c.date}"></label>
       <label>From<select name="from">${hourOpts(c.from)}</select></label>
       <label>Till<select name="to">${hourOpts(c.to)}</select></label>
@@ -71,6 +71,7 @@ function show(r) {
     <div class="tabs">${r.plans.map((p, i) => `<button class="tab ${i ? '' : 'on'}" data-plan="${i}">Plan ${'ABC'[i]} · ${money(p.totalCost)}</button>`).join('')}</div>
     <div class="plan-grid"><div id="plan-detail"></div><div id="plan-map" class="plan-map"></div></div>
   </section>` : `<div class="empty"><h3>No plan fits yet</h3><p>Try raising the budget, widening the time window or picking another day.</p></div>`}`;
+  mountCityField($('.city-field', out));
   $('#tweak').onsubmit = e => {
     e.preventDefault();
     const fd = Object.fromEntries(new FormData(e.target));

@@ -65,6 +65,8 @@ const CITIES = [
       ['Sarafa Bazaar', 22.7190, 75.8560, 'central'] ] },
 ].map(c => ({ ...c, areas: c.areas.map(([name, lat, lng, zone]) => ({ name, lat, lng, zone })) }));
 
+require('./cities').extendCities(CITIES);
+
 // color = poster background, ink = poster text colour
 const CATEGORIES = [
   { id: 'music', label: 'Live Music', icon: '♬', color: '#d3dbf3', ink: '#202644' },

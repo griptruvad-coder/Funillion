@@ -34,7 +34,7 @@ function makeCanonical(todayKey, seed) {
   const out = [];
   const nowHourIST = new Date(Date.now() + 330 * 60000).getUTCHours();
   const seen = new Set();
-  for (const city of CITIES) {
+  for (const city of CITIES.filter(c => c.featured)) {
     const count = Math.round(150 * city.weight);
     const bias = CITY_BIAS[city.id] || {};
     const catEntries = Object.entries(TEMPLATES).map(([cat, t]) => [cat, t.w * (bias[cat] || 1)]);

@@ -52,12 +52,14 @@ function parse(query, user) {
 
   // city
   let cityMentioned = false;
-  for (const city of CITIES) {
+  for (const city of CITIES.filter(c => c.featured)) {
     const names = [city.id, city.short.toLowerCase(), city.name.toLowerCase()];
     if (city.id === 'bengaluru') names.push('bangalore', 'blr'); if (city.id === 'mumbai') names.push('bombay'); if (city.id === 'kolkata') names.push('calcutta');
-    if (city.id === 'delhi') names.push('dilli', 'ncr', 'gurgaon', 'gurugram', 'noida');
+    if (city.id === 'delhi') names.push('dilli', 'ncr');
     if (names.some(has)) { c.city = city.id; cityMentioned = true; break; }
   }
+  const resolvedCity = require('./cities').resolveCity(query);
+  if (resolvedCity) { c.city = resolvedCity; cityMentioned = true; }
   const city = CITIES.find(x => x.id === c.city);
 
   // budget: ₹1000 / rs 1500 / 1.5k / 2000 rupees / budget 800 / under 500
@@ -137,7 +139,7 @@ async function llmParse(query, base) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 9000);
   try {
-    const sys = `You convert an Indian user's plan request (English or Hinglish) into JSON constraints. Today (IST) is ${istDayKey(new Date())}. Valid cities: ${CITIES.map(c => c.id).join(', ')}. Valid categories: ${CATEGORIES.map(c => c.id).join(', ')}. Zones: north,south,east,west,central,ncr. Respond with ONLY JSON: {"city":string|null,"budget":number|null (total rupees for whole group),"people":number|null,"date":"YYYY-MM-DD"|null,"from":hour 0-26|null,"to":hour 0-26|null,"zone":string|null,"categories":string[],"exclude":string[],"maxStops":number|null}`;
+    const sys = `You convert an Indian user's plan request (English or Hinglish) into JSON constraints. Today (IST) is ${istDayKey(new Date())}. Current city: ${base.city}. The user may name any Indian city; use its name in the city field. Valid categories: ${CATEGORIES.map(c => c.id).join(', ')}. Zones: north,south,east,west,central,ncr. Respond with ONLY JSON: {"city":string|null,"budget":number|null (total rupees for whole group),"people":number|null,"date":"YYYY-MM-DD"|null,"from":hour 0-26|null,"to":hour 0-26|null,"zone":string|null,"categories":string[],"exclude":string[],"maxStops":number|null}`;
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST', signal: controller.signal,
       headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
@@ -148,7 +150,8 @@ async function llmParse(query, base) {
     const text = data.content?.map(b => b.text || '').join('') || '';
     const j = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
     const out = { ...base, parser: 'claude' };
-    if (CITIES.some(c => c.id === j.city)) out.city = j.city;
+    const mentioned = require('./cities').resolveCity(j.city);
+    if (mentioned) out.city = mentioned;
     if (Number.isFinite(j.budget)) out.budget = j.budget;
     if (Number.isFinite(j.people) && j.people > 0) out.people = j.people;
     if (/^\d{4}-\d\d-\d\d$/.test(j.date || '')) out.date = j.date;

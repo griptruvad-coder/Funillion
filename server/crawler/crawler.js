@@ -8,6 +8,7 @@ const robotsLib = require('./robots');
 const { extractEvents, toRecord, eventLinks } = require('./extract');
 const { activeSites } = require('./sites');
 const { hackToRecord } = require('./hackathons');
+const { CITIES } = require('../catalog');
 
 const MAX_PAGES = Number(process.env.CRAWL_MAX_PAGES_PER_SITE) || 120;
 const MIN_DELAY = Number(process.env.CRAWL_DELAY_MS) || 1500;
@@ -165,23 +166,43 @@ async function crawlSite(site, db, ingest) {
 }
 
 let running = false;
-async function run(db, ingest, { only, log = console.log } = {}) {
+async function run(db, ingest, { only, cityIds, log = console.log } = {}) {
   if (running) return { skipped: 'already running' };
   running = true;
   db.crawl ||= { sites: {}, seen: {} };
-  const sites = activeSites().filter(s => !only || only.includes(s.id));
+  const requested = Boolean(cityIds);
+  if (!cityIds) {
+    const batch = Math.max(1, Math.min(20, Number(process.env.CRAWL_CITIES_PER_RUN) || 8));
+    const start = Number(db.crawl.cityCursor) || 0;
+    cityIds = Array.from({ length: batch }, (_, i) => CITIES[(start + i) % CITIES.length].id);
+    db.crawl.cityCursor = (start + batch) % CITIES.length;
+  }
+  const sites = activeSites(cityIds).filter(s => (!only || only.includes(s.id)) && (!requested || s.seeds?.some(seed => seed.city && cityIds.includes(seed.city))));
   const t0 = Date.now();
   try {
     // different websites in parallel, each website strictly sequential & polite
     const results = await Promise.all(sites.map(s => crawlSite(s, db, ingest).catch(e => ({ site: s.id, name: s.name, errors: [e.message] }))));
     for (const r of results) db.crawl.sites[r.site] = r;
+    db.crawl.checkedCities ||= {};
+    if (sites.length) for (const id of cityIds) db.crawl.checkedCities[id] = new Date().toISOString();
     // forget pages not seen for 45 days
     for (const [u, s] of Object.entries(db.crawl.seen)) if (Date.now() - s.t > 45 * DAY) delete db.crawl.seen[u];
     db.crawl.lastRun = new Date().toISOString();
+    if (!requested) db.crawl.lastNationwideRun = db.crawl.lastRun;
     const tot = results.reduce((a, r) => ({ pages: a.pages + (r.pages || 0), created: a.created + (r.created || 0), merged: a.merged + (r.merged || 0) }), { pages: 0, created: 0, merged: 0 });
     log(`› Crawler: ${sites.length} sites · ${tot.pages} pages · ${tot.created} new events · ${tot.merged} merged · ${Math.round((Date.now() - t0) / 1000)} s`);
     return { sites: results, ...tot };
   } finally { running = false; }
 }
 
-module.exports = { run, isRunning: () => running, UA };
+function requestCity(db, id) {
+  db.crawl ||= { sites: {}, seen: {} };
+  db.crawl.cityQueue ||= [];
+  const last = Date.parse(db.crawl.checkedCities?.[id] || '');
+  if (Number.isFinite(last) && Date.now() - last < 6 * 3600000) return 'recently-checked';
+  if (db.crawl.cityQueue.includes(id)) return 'queued';
+  if (db.crawl.cityQueue.length >= 200) return 'busy';
+  db.crawl.cityQueue.push(id); return 'queued';
+}
+
+module.exports = { run, requestCity, isRunning: () => running, UA };

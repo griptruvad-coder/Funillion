@@ -1,4 +1,4 @@
-import { state, api, $, $$, esc, money, cat, city, requireAuth, toast, go, loading, relDay, fmtTime, timeAgo } from '../core.js';
+import { state, api, $, $$, esc, money, cat, city, requireAuth, toast, go, loading, relDay, fmtTime, timeAgo, cityField, mountCityField } from '../core.js';
 
 let tab = 'aggregation';
 export async function render(el, _, params) {
@@ -81,7 +81,7 @@ function create(box, draft = {}) {
       <label>Event title<input name="title" required minlength="4" maxlength="120" value="${esc(draft.title || '')}"></label>
       <div class="three">
         <label>Category<select name="category">${state.meta.categories.map(c => `<option value="${c.id}" ${draft.category === c.id ? 'selected' : ''}>${c.icon} ${esc(c.label)}</option>`).join('')}</select></label>
-        <label>City<select name="city" id="f-city">${cities.map(c => `<option value="${c.id}" ${c.id === cityId ? 'selected' : ''}>${esc(c.short)}</option>`).join('')}</select></label>
+        ${cityField('f-city', cityId)}
         <label>Area<select name="area" id="f-area">${areas.map(a => `<option ${draft.area === a.name ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
       </div>
       <div class="three">
@@ -106,6 +106,7 @@ function create(box, draft = {}) {
   };
   drawTiers();
   $('#add-tier').onclick = () => { tiers.push({ name: 'VIP', price: 999, capacity: 30 }); drawTiers(); };
+  mountCityField($('.city-field', box));
   $('#f-city').onchange = e => { $('#f-area').innerHTML = city(e.target.value).areas.map(a => `<option>${esc(a.name)}</option>`).join(''); };
   $('#imp').onsubmit = async e => {
     e.preventDefault();

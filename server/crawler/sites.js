@@ -1,4 +1,5 @@
 const { SOURCES: HACKATHON_SOURCES } = require('./hackathons');
+const { CITIES } = require('../catalog');
 
 // Which websites the crawler reads, and where it starts on each.
 // Every URL still goes through that site's robots.txt at runtime — if a site disallows it, it is skipped.
@@ -38,10 +39,20 @@ function extraSites() {
   } catch { console.warn('CRAWL_EXTRA is not valid JSON — ignoring'); return []; }
 }
 
-function activeSites() {
+function activeSites(cityIds) {
   const only = (process.env.CRAWL_SITES || '').split(',').map(s => s.trim()).filter(Boolean);
   const all = [...SITES, ...HACKATHON_SOURCES, ...extraSites()];
-  return all.filter(s => (only.length ? only.includes(s.id) : s.enabled));
+  return all.filter(s => (only.length ? only.includes(s.id) : s.enabled)).map(site => {
+    if (!cityIds || !SLUGS[site.id]) return site;
+    const templates = { allevents: s => `https://allevents.in/${s}/all`, eventbrite: s => `https://www.eventbrite.com/d/india--${s}/events/`, townscript: s => `https://www.townscript.com/in/${s}`, luma: s => `https://luma.com/${s}`, bookmyshow: s => `https://in.bookmyshow.com/explore/events-${s}` };
+    const seeds = cityIds.map(id => CITIES.find(c => c.id === id)).filter(Boolean).flatMap(c => {
+      // Luma's city directory is curated: only request known published city paths.
+      if (site.id === 'luma' && !SLUGS.luma[c.id]) return [];
+      const slug = SLUGS[site.id][c.id] || c.short.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      return [{ city: c.id, url: templates[site.id](slug) }];
+    });
+    return { ...site, seeds };
+  }).filter(s => s.kind === 'api' || s.seeds.length);
 }
 
 module.exports = { SITES, HACKATHON_SOURCES, activeSites };

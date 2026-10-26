@@ -32,6 +32,40 @@ export const city = id => state.meta?.cities.find(c => c.id === id) || { id, nam
 export const timeAgo = d => { const s = (Date.now() - new Date(d)) / 1000; return s < 60 ? 'just now' : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : fmtDay(d); };
 export const debounce = (fn, ms = 250) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
+// Keep the visible city list bounded even with thousands of supported towns.
+export function mountCitySearch(container, onPick, selected = '') {
+  let version = 0;
+  container.innerHTML = `<div class="city-choice-summary" ${selected ? '' : 'hidden'}>${selected ? esc(`${city(selected).short}, ${city(selected).state}`) : ''}</div><div class="city-search-controls"><label class="search small"><span>⌕</span><input class="city-search-input" aria-label="Search cities and towns" placeholder="Search a city or local name…" autocomplete="off"></label><select class="city-state-filter" aria-label="Filter by state"><option value="">All states & UTs</option>${(state.meta.states || []).map(s => `<option>${esc(s)}</option>`).join('')}</select></div><p class="city-search-count" role="status"></p><div class="city-picker"></div>`;
+  const input = $('.city-search-input', container), select = $('.city-state-filter', container), results = $('.city-picker', container), count = $('.city-search-count', container);
+  const search = async stamp => {
+    try {
+      const data = await api('/cities?' + new URLSearchParams({ q: input.value, state: select.value, limit: 60 }));
+      if (!container.isConnected || stamp !== version) return;
+      count.textContent = data.items.length ? `Showing ${data.items.length} matches. Type more to narrow your search.` : 'No matching city. Try another spelling or state.';
+      results.innerHTML = data.items.map(c => `<button type="button" class="city-opt ${selected === c.id ? 'on' : ''}" data-city-choice="${esc(c.id)}"><b>${esc(c.short)}</b><span>${esc(c.state)} · ${c.count} events</span></button>`).join('');
+      results.querySelectorAll('[data-city-choice]').forEach(b => b.onclick = () => { selected = b.dataset.cityChoice; const summary = $('.city-choice-summary', container); summary.hidden = false; summary.textContent = `${city(selected).short}, ${city(selected).state}`; results.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); onPick(selected); });
+    } catch (e) { if (container.isConnected && stamp === version) count.textContent = e.message; }
+  };
+  const delayed = debounce(search);
+  input.oninput = () => delayed(++version);
+  select.onchange = () => search(++version);
+  search(++version);
+}
+
+export function cityField(id, selected) {
+  const c = city(selected);
+  return `<div class="city-field"><input type="hidden" name="city" id="${esc(id)}" value="${esc(selected)}"><details><summary>City: ${esc(c.short)}, ${esc(c.state)}</summary><div class="city-field-search"></div></details></div>`;
+}
+export function mountCityField(container) {
+  const details = $('details', container), input = $('input[name="city"]', container);
+  let mounted = false;
+  details.ontoggle = () => {
+    if (!details.open || mounted) return;
+    mounted = true;
+    mountCitySearch($('.city-field-search', container), id => { input.value = id; $('summary', container).textContent = `City: ${city(id).short}, ${city(id).state}`; details.open = false; input.dispatchEvent(new Event('change', { bubbles: true })); }, input.value);
+  };
+}
+
 export function avatar(u, size = '') {
   if (!u) return '';
   const initials = u.initials || (u.name || '?').split(/\s+/).map(s => s[0]).join('').slice(0, 2).toUpperCase();
@@ -149,7 +183,7 @@ export function openAuth(mode = 'login', reason = '') {
     if (step === 'city') body = `
       <p class="step-label">STEP 2 OF 3</p><h3 class="step-title">Where do you make plans?</h3>
       <p class="muted">You'll see events from this city first. Switch any time.</p>
-      <div class="city-picker">${cities.map(c => `<button class="city-opt ${form.city === c.id ? 'on' : ''}" data-city="${c.id}"><b>${esc(c.short)}</b><span>${esc(c.state)} · ${c.count} events</span></button>`).join('')}</div>
+      <div id="signup-city-search"></div>
       <button class="btn primary big" id="city-next" ${form.city ? '' : 'disabled'}>Next: what's your kind of fun? →</button>`;
     if (step === 'interests') body = `
       <p class="step-label">STEP 3 OF 3</p><h3 class="step-title">What's your kind of fun?</h3>
@@ -170,7 +204,7 @@ export function openAuth(mode = 'login', reason = '') {
     });
     $('#demo-login', content)?.addEventListener('click', async () => { const { user } = await api('/auth/demo', { method: 'POST' }); onLoggedIn(user); });
     $('#signup-form', content)?.addEventListener('submit', ev => { ev.preventDefault(); Object.assign(form, Object.fromEntries(new FormData(ev.target))); render('city'); });
-    $$('[data-city]', content).forEach(b => b.onclick = () => { form.city = b.dataset.city; $$('[data-city]', content).forEach(x => x.classList.toggle('on', x === b)); $('#city-next', content).disabled = false; });
+    if (step === 'city') mountCitySearch($('#signup-city-search', content), id => { form.city = id; $('#city-next', content).disabled = false; }, form.city);
     $('#city-next', content)?.addEventListener('click', () => render('interests'));
     $$('[data-int]', content).forEach(b => b.onclick = () => { const i = b.dataset.int; form.interests = form.interests.includes(i) ? form.interests.filter(x => x !== i) : [...form.interests, i]; b.classList.toggle('selected'); });
     $('#finish', content)?.addEventListener('click', async () => {
@@ -190,10 +224,12 @@ function onLoggedIn(user, isNew) {
 }
 
 export async function setCity(id) {
+  if (!state.meta.cities.some(c => c.id === id)) return;
   state.city = id;
   try { localStorage.setItem('fn-city', id); } catch {}
   if (state.user) { try { const { user } = await api('/me', { method: 'PATCH', body: { city: id } }); state.user = user; } catch {} }
   emit();
+  api(`/cities/${encodeURIComponent(id)}/events/refresh`, { method: 'POST' }).then(r => { if (r.status === 'queued') toast('Looking for fresh events in your city. Check back shortly.'); }).catch(() => {});
 }
 
 // global handlers for save buttons (works on any page)

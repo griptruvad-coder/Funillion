@@ -1,4 +1,5 @@
-import { state, api, $, $$, esc, city, cat, emit, go, openAuth, setCity, toggleSave, avatar, toast, closeModal, modal } from './core.js';
+import { state, api, $, $$, esc, city, cat, emit, go, openAuth, setCity, toggleSave, avatar, toast, closeModal, modal, mountCitySearch } from './core.js';
+import * as movies from './pages/movies.js';
 import * as discover from './pages/discover.js';
 import * as landing from './pages/landing.js';
 import * as eventPage from './pages/event.js';
@@ -12,6 +13,7 @@ import * as account from './pages/account.js';
 const routes = [
   [/^#?\/?$/, () => (state.user ? discover.render : landing.render)],
   [/^#\/discover$/, () => discover.render],
+  [/^#\/movies$/, () => movies.render],
   [/^#\/event\/([\w-]+)$/, () => eventPage.render],
   [/^#\/checkout\/([\w-]+)$/, () => booking.checkout],
   [/^#\/ticket\/([\w-]+)$/, () => booking.ticket],
@@ -51,7 +53,7 @@ function renderHeader() {
   const u = state.user, c = city(state.city);
   const path = (location.hash || '#/').split('?')[0];
   const active = p => (path.startsWith(p) || (p === '#/discover' && (path === '#/' || path === '')) ? 'active' : '');
-  const links = [['#/discover', 'Discover', '✳'], ['#/map', 'Map', '⌖'], ['#/plan', 'Plan my day', '✦'], ['#/friends', 'Friends', '☺'], ['#/tickets', 'Tickets', '▤']];
+  const links = [['#/discover', 'Discover', '✳'], ['#/movies', 'Movies', '▣'], ['#/map', 'Map', '⌖'], ['#/plan', 'Plan my day', '✦'], ['#/friends', 'Friends', '☺'], ['#/tickets', 'Tickets', '▤']];
   $('#header').innerHTML = `
     <a class="logo" href="#/">funillion<span>✳</span></a>
     <nav class="top-nav">${links.map(([h, l]) => `<a class="nav ${active(h)}" href="${h}">${l}${h === '#/plan' ? ' <em>AI</em>' : ''}</a>`).join('')}</nav>
@@ -71,13 +73,8 @@ function renderHeader() {
 document.addEventListener('click', e => { const m = $('#user-menu'); if (m && !m.hidden && !e.target.closest('.menu-wrap')) m.hidden = true; });
 
 export function openCityPicker() {
-  const byState = state.meta.cities;
-  modal(`<div class="city-modal"><p class="eyebrow">FUNILLION IS LIVE IN ${byState.length} CITIES</p><h2>Where are you making plans?</h2>
-    <label class="search small"><span>⌕</span><input id="city-filter" placeholder="Search a city…" autocomplete="off"></label>
-    <div class="city-picker">${byState.map(c => `<button class="city-opt ${state.city === c.id ? 'on' : ''}" data-pick="${c.id}"><b>${esc(c.short)}</b><span>${esc(c.state)} · ${c.count} events</span></button>`).join('')}</div>
-    <p class="muted small">More cities coming soon — tell organisers to list on Funillion.</p></div>`);
-  $('#city-filter').oninput = e => $$('[data-pick]').forEach(b => b.hidden = !b.textContent.toLowerCase().includes(e.target.value.toLowerCase()));
-  $$('[data-pick]').forEach(b => b.onclick = async () => { closeModal(); await setCity(b.dataset.pick); toast(`Showing events in ${city(b.dataset.pick).short}`); });
+  modal(`<div class="city-modal"><p class="eyebrow">${state.meta.totals.cities.toLocaleString('en-IN')} CITIES & TOWNS · ALL INDIA</p><h2>Where are you making plans?</h2><div id="city-search"></div><p class="muted small">Search by city, local name or state. Event availability depends on local listings.</p><p class="fine">City data: <a href="https://www.geonames.org/" target="_blank" rel="noopener">GeoNames</a> · CC BY 4.0.</p></div>`);
+  mountCitySearch($('#city-search'), async id => { closeModal(); await setCity(id); toast(`Showing ${city(id).short}, ${city(id).state}`); }, state.city);
 }
 
 // global delegated actions

@@ -1,10 +1,10 @@
 # Funillion ✳ — A million ways to have fun
 
-India's everything-events app. Concerts, comedy, hackathons, bhajan clubbing, parties, meetups, open mics, workshops, fests, sports — across 14 cities. Discover, plan your day with AI, plan with friends and book tickets.
+India's everything-events app. Search 7,000+ cities and towns across all 36 states and Union Territories for concerts, comedy, hackathons, festivals and meetups. Discover, plan with friends, and explore movies and nearby cinemas.
 
 ## Run it (2 minutes)
 
-You need **Node.js 18 or newer** (check with `node -v`). There's nothing to `npm install`.
+You need **Node.js 20 or newer** (check with `node -v`). There's nothing to `npm install`.
 
 ```bash
 cd Funillion
@@ -22,10 +22,14 @@ The first run builds `data/db.json` and the source feeds in `data/sources/`. Whe
 
 ## What's inside
 
+**Nationwide coverage:** searchable city and state pickers, local-language aliases, independent satellite cities, demand-based event discovery and rotating crawler batches. Actual event coverage depends on source availability. See [city data and attribution](server/CITY-DATA.md).
+
+**Movies:** `/#/movies` shows nearby cinema directory results without credentials. Connect India-licensed MovieGlu credentials for current local movies, showtimes and cinema booking links, or a booking partner feed for live ticket offers and fee-aware group budget matching. The dropdown only includes films with upcoming shows at nearby cinemas. Built-in Hinglish filters understand budget, language, group size and evening plans; optional AI preference extraction uses `ANTHROPIC_API_KEY` plus `MOVIES_AI_MODEL`. Current movies, showtimes, prices and AI extraction need the corresponding provider configuration; they are not fabricated in demo mode. See [movie data setup and contract](docs/movie-data.md).
+
 | Feature | Where to see it | Code |
 |---|---|---|
 | **Login + city** — signup asks your city and interests; feed, map and planner follow that city; switch any time | Header → city button | `server/auth.js`, `public/js/core.js` |
-| **Pan-India catalogue** — 14 cities, 17 categories, ~1,900 events | Landing, Discover | `server/catalog.js`, `server/seed.js` |
+| **Nationwide directory** — 7,000+ cities/towns, 36 states/UTs, 17 categories; local demo data in 14 featured cities | Landing, Discover | `server/catalog.js`, `server/seed.js` |
 | **Smart Event Aggregation** — 3 sources with different schemas → normalise → dedupe → one listing per event (2,700 raw → 1,920 unique; 0 false merges in testing) | Avatar menu → Organizer → Smart aggregation; "Where this listing comes from" on event pages | `server/aggregator.js` |
 | **Event Submission Engine** — paste an event URL, it reads schema.org/Open Graph data and fills the form; duplicates are merged | Organizer → Add an event | `server/importer.js` |
 | **Personalised "For You"** — interests + your activity (views, saves, bookings, decaying over time) + friends + popularity + urgency, with diversity re-ranking and "why" labels | Discover (logged in) | `server/feed.js` |
@@ -60,7 +64,7 @@ Set these in **Railway → service → Variables** (full list with comments in `
 
 | Variable | What it does |
 |---|---|
-| `SERPAPI_KEY` | Turns on **real events** for all cities from Google Events (BookMyShow, District, AllEvents, Insider…). First pull runs ~3 s after deploy, then every 7 days. |
+| `SERPAPI_KEY` | Turns on **real event searches** for rotating city batches from Google Events (BookMyShow, District, AllEvents, Insider…). First pull runs ~3 s after deploy, then every 7 days within the configured monthly budget. |
 | `ADMIN_EMAILS` | Your Funillion login email → you get the **"Pull real events now"** button (Organizer → Smart aggregation). |
 | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | Real checkout. Use **test keys** (`rzp_test_…`) until real organisers list real events. Without keys the demo gateway is used. |
 | `RAZORPAY_WEBHOOK_SECRET` | Confirms bookings even if the buyer closes the tab after paying; tracks refunds. |
@@ -75,7 +79,7 @@ On Railway, demo data is **off by default**: the first deploy removes all fake e
 `server/crawler/` reads public event pages on AllEvents, District, Eventbrite, Townscript and Luma (list in `server/crawler/sites.js`), plus hackathons from **Devpost, Unstop, Devfolio, HackerEarth and Hack2Skill** (`server/crawler/hackathons.js`), every 12 h:
 1. checks each site's **robots.txt** (skips anything disallowed, honours Crawl-delay) and identifies itself as `FunillionBot`
 2. opens the city listing pages + event sitemaps, then the event pages (one request at a time per site, ≥1.5 s apart; a site that keeps refusing is left alone)
-3. reads the **schema.org Event** data sites publish for search engines — title, date/time, venue, geo, price — and keeps only upcoming, in-person events in our 14 cities
+3. reads the **schema.org Event** data sites publish for search engines — title, date/time, venue, geo, price — and keeps only upcoming, in-person events in the Indian city directory
 4. hands them to the aggregator, which merges the same event from different sites into one listing with every booking link
 5. remembers pages it has read, so later runs only fetch new/stale pages
 

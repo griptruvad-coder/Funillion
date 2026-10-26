@@ -80,6 +80,8 @@ function toRecord(ev, pageUrl, site) {
   }
   const endP = ev.endDate ? parseDate(ev.endDate) : null;
   const addr = typeof loc.address === 'string' ? { streetAddress: loc.address } : (first(loc.address) || {});
+  const country = decode(typeof addr.addressCountry === 'object' ? addr.addressCountry?.name || addr.addressCountry?.identifier : addr.addressCountry).toLowerCase();
+  if (country && !['in', 'ind', 'india', 'bharat', 'भारत'].includes(country)) return { skip: 'outside India' };
   const addrText = decode([addr.streetAddress, addr.addressLocality, addr.addressRegion].filter(Boolean).join(', '));
   const venue = decode(loc.name || addr.streetAddress || '').slice(0, 90) || 'Venue on listing';
   const cityId = resolveCity(decode(addr.addressLocality), decode(addr.addressRegion), addrText, venue, decode(ev.name));
@@ -87,6 +89,7 @@ function toRecord(ev, pageUrl, site) {
   if (!city) return { skip: 'outside our cities' };
   const geo = first(loc.geo) || {};
   let lat = parseFloat(geo.latitude), lng = parseFloat(geo.longitude);
+  if (Number.isFinite(lat) && Number.isFinite(lng) && haversineKm({ lat, lng }, city) > 120) return { skip: 'city and coordinates conflict' };
   const hasGeo = Number.isFinite(lat) && Number.isFinite(lng) && haversineKm({ lat, lng }, city) < 60;
   const areaByName = city.areas.find(a => addrText.toLowerCase().includes(a.name.split(',')[0].toLowerCase()));
   const area = hasGeo ? nearestArea(city, lat, lng) || areaByName : areaByName;

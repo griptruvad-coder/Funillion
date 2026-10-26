@@ -3,15 +3,15 @@ import { openCityPicker } from '../app.js';
 
 export async function render(el) {
   const m = state.meta;
-  const bigCities = [...m.cities].sort((a, b) => b.count - a.count);
+  const bigCities = [...m.cities].sort((a, b) => b.count - a.count).slice(0, 24);
   el.innerHTML = `
   <section class="landing-hero">
     <div class="hero-copy">
       <p class="eyebrow">INDIA'S EVERYTHING-EVENTS APP</p>
       <h1 class="mega">A million ways<br>to have <em>fun.</em></h1>
-      <p class="lede">Concerts, comedy nights, hackathons, bhajan clubbing, rooftop parties, open mics and meetups — every plan across ${m.cities.length} cities, in one app. Book in seconds. Plan with friends.</p>
+      <p class="lede">Concerts, comedy nights, movies, hackathons and meetups across India. Search ${m.cities.length.toLocaleString('en-IN')} cities and towns, find your next plan, and bring your friends.</p>
       <form class="hero-search" id="hero-search">
-        <select id="hero-city" aria-label="City">${bigCities.map(c => `<option value="${c.id}" ${state.city === c.id ? 'selected' : ''}>${esc(c.short)}</option>`).join('')}</select>
+        <button type="button" class="btn ghost" id="hero-city">⌖ ${state.city ? esc(city(state.city).short) : 'Choose city'} ▾</button>
         <input id="hero-q" placeholder="Comedy tonight, hackathons, bhajan clubbing…" aria-label="Search">
         <button class="btn primary">Find my fun ↗</button>
       </form>
@@ -32,7 +32,7 @@ export async function render(el) {
   </section>
 
   <section class="section">
-    <div class="section-head"><div><p class="eyebrow">FROM DELHI TO KOCHI</p><h2>Pick your city</h2></div></div>
+    <div class="section-head"><div><p class="eyebrow">ALL STATES. EVERY KIND OF PLAN.</p><h2>Pick your city</h2></div><button class="btn ghost" id="all-cities">Search all ${m.cities.length.toLocaleString('en-IN')} cities & towns ↗</button></div>
     <div class="city-grid">${bigCities.map(c => `<button class="city-card" data-city="${c.id}"><b>${esc(c.short)}</b><span>${esc(c.state)}</span><em>${c.count} events →</em></button>`).join('')}</div>
   </section>
 
@@ -49,7 +49,9 @@ export async function render(el) {
   <footer class="footer"><span class="logo">funillion<span>✳</span></span><p>A million ways to have fun.</p><span>MADE IN INDIA · 2026</span></footer>`;
 
   const browse = (cityId, extra = '') => { setCity(cityId).then(() => go('#/discover' + extra)); };
-  $('#hero-search').onsubmit = e => { e.preventDefault(); const q = $('#hero-q').value.trim(); browse($('#hero-city').value, q ? `?q=${encodeURIComponent(q)}` : ''); };
+  $('#hero-city').onclick = openCityPicker;
+  $('#all-cities').onclick = openCityPicker;
+  $('#hero-search').onsubmit = e => { e.preventDefault(); if (!state.city) return openCityPicker(); const q = $('#hero-q').value.trim(); browse(state.city, q ? `?q=${encodeURIComponent(q)}` : ''); };
   $$('[data-city]', el).forEach(b => b.onclick = () => browse(b.dataset.city));
   $$('[data-cat]', el).forEach(b => b.onclick = () => { if (!state.city) { openCityPicker(); return; } go(`#/discover?cat=${b.dataset.cat}`); });
   $('#cta-signup').onclick = () => openAuth('signup');

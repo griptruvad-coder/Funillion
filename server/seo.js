@@ -6,6 +6,7 @@
 //   /sitemap.xml, /sitemaps/*.xml, /robots.txt
 // The interactive app stays at "/" (hash routes); these pages link into it for booking/saving/planning.
 const { CITIES, CATEGORIES } = require('./catalog');
+const { findCity, searchCities } = require('./cities');
 const { istDayKey, addDaysKey, dowOfKey } = require('./util');
 
 const CAT_SLUG = { music: 'concerts-live-music', comedy: 'comedy-shows', hackathons: 'hackathons', bhajan: 'bhajan-clubbing', parties: 'parties-nightlife', meetups: 'meetups', workshops: 'workshops', openmic: 'open-mic-poetry', theatre: 'theatre-plays', food: 'food-drink-events', arts: 'art-culture-events', sports: 'sports-fitness', festivals: 'festivals-melas', networking: 'startup-networking-events', gaming: 'gaming-esports', wellness: 'yoga-wellness', screenings: 'movie-screenings' };
@@ -16,13 +17,13 @@ const PER_PAGE = 60;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const slugify = s => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 70);
 const eventPath = ev => {
-  const cityName = CITIES.find(c => c.id === ev.city)?.short || '';
+  const cityName = findCity(ev.city)?.short || '';
   const withCity = new RegExp(`\\b${cityName}\\b`, 'i').test(ev.title) ? ev.title : `${ev.title} ${cityName}`;
   return `/e/${slugify(withCity)}-${ev.id}`;
 };
 // online hackathons live under a virtual "city" so they get their own pages: /in/online, /in/online/hackathons
 const ONLINE = { id: 'online', name: 'Online', short: 'Online', state: null, areas: [] };
-const cityOf = id => (id === 'online' ? ONLINE : CITIES.find(c => c.id === id));
+const cityOf = id => (id === 'online' ? ONLINE : findCity(id));
 const ALL_PLACES = [...CITIES, ONLINE];
 const catOf = id => CATEGORIES.find(c => c.id === id);
 const TZ = { timeZone: 'Asia/Kolkata' };
@@ -63,7 +64,7 @@ ${schema.map(jsonLd).join('')}</head><body>
 <header class="site-header"><a class="logo" href="/">funillion<span>✳</span></a><nav class="top-nav seo-nav"><a class="nav" href="/in/delhi">Delhi</a><a class="nav" href="/in/mumbai">Mumbai</a><a class="nav" href="/in/bengaluru">Bengaluru</a><a class="nav" href="/in/hyderabad">Hyderabad</a><a class="nav" href="/in/pune">Pune</a></nav><a class="btn primary small" style="margin-left:auto" href="/">Open Funillion ↗</a></header>
 <main class="seo">${body}</main>
 <footer class="seo-footer"><div><a class="logo" href="/">funillion<span>✳</span></a><p>A million ways to have fun — concerts, comedy, hackathons, bhajan clubbing, parties and meetups across India.</p></div>
-<div><b>Cities</b>${CITIES.map(c => `<a href="/in/${c.id}">Events in ${esc(c.short)}</a>`).join('')}</div>
+<div><b>Cities</b>${CITIES.filter(c => c.featured).map(c => `<a href="/in/${c.id}">Events in ${esc(c.short)}</a>`).join('')}<a href="/cities">Search all Indian cities & towns</a><a href="/#/movies">Movies & nearby cinemas</a></div>
 <div><b>Popular</b>${['comedy', 'music', 'hackathons', 'bhajan', 'parties', 'workshops'].map(k => `<a href="/in/delhi/${CAT_SLUG[k]}">${esc(catOf(k).label)} in Delhi</a>`).join('')}${['comedy', 'music'].map(k => `<a href="/in/mumbai/${CAT_SLUG[k]}">${esc(catOf(k).label)} in Mumbai</a>`).join('')}<a href="/in/bengaluru/hackathons">Hackathons in Bengaluru</a><a href="/in/online/hackathons">Online hackathons</a></div></footer>
 </body></html>`;
 }
@@ -86,6 +87,7 @@ function listPage(db, req, { city, cat, coll, pageNo }) {
   const total = list.length;
   list = list.slice((pageNo - 1) * PER_PAGE, pageNo * PER_PAGE);
   const what = cat ? catOf(cat.id).label : 'Events';
+  const relatedCityIds = new Set(Object.values(db.events).filter(e => cat && e.category === cat.id && e.status === 'live' && new Date(e.end || e.start) > now).map(e => e.city));
   const when = coll ? COLLECTIONS[coll] : 'Upcoming';
   const online = city.id === 'online';
   const where = online ? 'online' : `in ${city.name}`;
@@ -107,7 +109,7 @@ function listPage(db, req, { city, cat, coll, pageNo }) {
   ${total > pageNo * PER_PAGE ? `<p class="center"><a class="btn ghost" href="${pathNow}?page=${pageNo + 1}">More ${esc(what.toLowerCase())} →</a></p>` : ''}
   <section class="s-cta"><div><b>Plan it with friends</b><span>Save events, get a personal feed, let AI plan your day, and book in seconds.</span></div><a class="btn primary" href="/#/discover">Open Funillion ↗</a></section>
   ${cats.length ? `<section class="s-links"><h2>More in ${esc(city.short)}</h2><div class="chips wrap">${cats.map(x => `<a class="chip" href="/in/${city.id}/${CAT_SLUG[x.k.id]}">${x.k.icon} ${esc(x.k.label)} <small>(${x.n})</small></a>`).join('')}</div></section>` : ''}
-  ${cat ? `<section class="s-links"><h2>${esc(what)} ${online ? 'in cities' : 'in other cities'}</h2><div class="chips wrap">${(cat.id === 'hackathons' ? ALL_PLACES : CITIES).filter(c => c.id !== city.id).map(c => `<a class="chip" href="/in/${c.id}/${CAT_SLUG[cat.id]}">${c.id === 'online' ? '🌐 Online' : esc(c.short)}</a>`).join('')}</div></section>` : ''}`;
+  ${cat ? `<section class="s-links"><h2>${esc(what)} ${online ? 'in cities' : 'in other cities'}</h2><div class="chips wrap">${(cat.id === 'hackathons' ? ALL_PLACES : CITIES).filter(c => c.id !== city.id && (c.featured || relatedCityIds.has(c.id))).slice(0, 24).map(c => `<a class="chip" href="/in/${c.id}/${CAT_SLUG[cat.id]}">${c.id === 'online' ? '🌐 Online' : esc(c.short)}</a>`).join('')}</div></section>` : ''}`;
   const schema = [
     { '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: crumbs.map((c, i) => ({ '@type': 'ListItem', position: i + 1, name: c.name, item: c.url })) },
     ...(list.length ? [{ '@context': 'https://schema.org', '@type': 'ItemList', name: h1, numberOfItems: total, itemListElement: list.slice(0, 30).map((e, i) => ({ '@type': 'ListItem', position: i + 1, url: base + eventPath(e) })) }] : []),
@@ -172,14 +174,17 @@ function eventPage(db, req, ev) {
 const xml = (urls) => `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.map(u => `<url><loc>${esc(u.loc)}</loc>${u.lastmod ? `<lastmod>${u.lastmod}</lastmod>` : ''}</url>`).join('')}</urlset>`;
 function sitemapIndex(db, req) {
   const base = baseUrl(req), today = new Date().toISOString().slice(0, 10);
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>${base}/sitemaps/pages.xml</loc><lastmod>${today}</lastmod></sitemap>${ALL_PLACES.map(c => `<sitemap><loc>${base}/sitemaps/events-${c.id}.xml</loc><lastmod>${today}</lastmod></sitemap>`).join('')}</sitemapindex>`;
+  const active = new Set(Object.values(db.events).filter(e => e.status === 'live' && new Date(e.end || e.start) > Date.now()).map(e => e.city));
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>${base}/sitemaps/pages.xml</loc><lastmod>${today}</lastmod></sitemap>${ALL_PLACES.filter(c => active.has(c.id)).map(c => `<sitemap><loc>${base}/sitemaps/events-${c.id}.xml</loc><lastmod>${today}</lastmod></sitemap>`).join('')}</sitemapindex>`;
 }
 function sitemapPages(db, req) {
   const base = baseUrl(req), now = Date.now(), today = new Date().toISOString().slice(0, 10);
   const up = Object.values(db.events).filter(e => e.status === 'live' && new Date(e.end || e.start).getTime() > now);
-  const urls = [{ loc: base + '/', lastmod: today }];
-  for (const city of ALL_PLACES) {
-    const ce = up.filter(e => e.city === city.id);
+  const urls = [{ loc: base + '/', lastmod: today }, { loc: base + '/cities' }];
+  const byCity = new Map();
+  for (const event of up) { if (!byCity.has(event.city)) byCity.set(event.city, []); byCity.get(event.city).push(event); }
+  for (const [id, ce] of byCity) {
+    const city = cityOf(id); if (!city) continue;
     if (ce.length >= 2) urls.push({ loc: `${base}/in/${city.id}`, lastmod: today });
     for (const k of Object.keys(COLLECTIONS)) if (ce.filter(e => inCollection(e, k)).length >= 2) urls.push({ loc: `${base}/in/${city.id}/${k}`, lastmod: today });
     for (const cat of CATEGORIES) { const n = ce.filter(e => e.category === cat.id); if (n.length >= 2) urls.push({ loc: `${base}/in/${city.id}/${CAT_SLUG[cat.id]}`, lastmod: today }); if (n.filter(e => inCollection(e, 'this-weekend')).length >= 2) urls.push({ loc: `${base}/in/${city.id}/${CAT_SLUG[cat.id]}/this-weekend`, lastmod: today }); }
@@ -195,10 +200,17 @@ function sitemapEvents(db, req, cityId) {
 function handle(db, req, res, url) {
   const send = (status, body, type = 'text/html; charset=utf-8', cache = 'public, max-age=600') => { res.writeHead(status, { 'content-type': type, 'cache-control': cache, 'x-content-type-options': 'nosniff' }); res.end(body); return true; };
   const p = url.pathname.replace(/\/+$/, '') || '/';
+  if (p === '/cities') {
+    const query = (url.searchParams.get('q') || '').slice(0, 80), state = (url.searchParams.get('state') || '').slice(0, 120);
+    const matches = searchCities(query, state, 100);
+    const states = [...new Set(CITIES.map(c => c.state))].sort();
+    const body = `<h1>Events across India</h1><p class="lede">Search ${CITIES.length.toLocaleString('en-IN')} cities and towns across all 36 states and Union Territories. Listings depend on local event availability.</p><form class="filters" method="get" action="/cities"><input aria-label="Search city" name="q" value="${esc(query)}" placeholder="Search a city or local name"><select aria-label="State" name="state"><option value="">All states & UTs</option>${states.map(s => `<option ${s === state ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select><button class="btn primary">Search</button></form><div class="city-grid">${matches.map(c => `<a class="city-card" href="/in/${c.id}"><b>${esc(c.short)}</b><span>${esc(c.state)}</span><em>Explore events →</em></a>`).join('')}</div>${matches.length === 100 ? '<p>Showing 100 matches. Search by name or state to narrow the list.</p>' : ''}<p class="fine">City data: <a href="https://www.geonames.org/">GeoNames</a>, CC BY 4.0.</p>`;
+    return send(200, page({ title: 'Find events in Indian cities & towns | Funillion', description: 'Find local events across all Indian states and Union Territories on Funillion.', canonical: baseUrl(req) + '/cities', body, noindex: Boolean(query || state) }));
+  }
   if (p === '/robots.txt') return send(200, `User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: ${baseUrl(req)}/sitemap.xml\n`, 'text/plain; charset=utf-8');
   if (p === '/sitemap.xml') return send(200, sitemapIndex(db, req), 'application/xml; charset=utf-8');
   if (p === '/sitemaps/pages.xml') return send(200, sitemapPages(db, req), 'application/xml; charset=utf-8');
-  let m = p.match(/^\/sitemaps\/events-([a-z]+)\.xml$/);
+  let m = p.match(/^\/sitemaps\/events-([a-z0-9-]+)\.xml$/);
   if (m && cityOf(m[1])) return send(200, sitemapEvents(db, req, m[1]), 'application/xml; charset=utf-8');
   m = p.match(/^\/e\/(?:[a-z0-9-]*-)?(ev_[a-z0-9]+)$/i);
   if (m) {
@@ -207,10 +219,10 @@ function handle(db, req, res, url) {
     if (p !== eventPath(ev)) { res.writeHead(301, { location: eventPath(ev) }); res.end(); return true; } // title changed → keep one canonical URL
     return send(200, eventPage(db, req, ev));
   }
-  m = p.match(/^\/in\/([a-z]+)(?:\/([a-z0-9-]+))?(?:\/([a-z0-9-]+))?$/);
+  m = p.match(/^\/in\/([a-z0-9-]+)(?:\/([a-z0-9-]+))?(?:\/([a-z0-9-]+))?$/);
   if (m) {
     const city = cityOf(m[1]);
-    if (!city) return send(404, page({ title: 'City not found | Funillion', description: 'Funillion covers 14 Indian cities.', canonical: baseUrl(req) + p, body: `<div class="empty"><h3>We're not in that city yet</h3><p>${CITIES.map(c => `<a class="link" href="/in/${c.id}">${esc(c.short)}</a>`).join(' · ')}</p></div>`, noindex: true }));
+    if (!city) return send(404, page({ title: 'City not found | Funillion', description: 'Search cities and towns across all Indian states and Union Territories.', canonical: baseUrl(req) + p, body: `<div class="empty"><h3>We're not in that city yet</h3><p>${CITIES.filter(c => c.featured).map(c => `<a class="link" href="/in/${c.id}">${esc(c.short)}</a>`).join(' · ')}</p></div>`, noindex: true }));
     let cat = null, coll = null;
     if (m[2]) { if (SLUG_CAT[m[2]]) cat = catOf(SLUG_CAT[m[2]]); else if (COLLECTIONS[m[2]]) coll = m[2]; else return send(404, page({ title: 'Page not found | Funillion', description: '', canonical: baseUrl(req) + p, body: `<div class="empty"><h3>Page not found</h3><p><a class="link" href="/in/${city.id}">Events in ${esc(city.short)} →</a></p></div>`, noindex: true })); }
     if (m[3]) { if (cat && COLLECTIONS[m[3]]) coll = m[3]; else return send(404, page({ title: 'Page not found | Funillion', description: '', canonical: baseUrl(req) + p, body: `<div class="empty"><h3>Page not found</h3><p><a class="link" href="/in/${city.id}">Events in ${esc(city.short)} →</a></p></div>`, noindex: true })); }

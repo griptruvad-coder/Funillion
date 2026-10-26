@@ -21,21 +21,7 @@ const SOURCE_META = {
 };
 
 // ---------- normalisation helpers ----------
-const CITY_ALIASES = {};
-for (const c of CITIES) for (const a of [c.id, c.name, c.short]) CITY_ALIASES[a.toLowerCase()] = c.id; // not states: Maharashtra has both Mumbai and Pune
-Object.assign(CITY_ALIASES, { 'new delhi': 'delhi', 'gurgaon': 'delhi', 'gurugram': 'delhi', 'noida': 'delhi', 'ncr': 'delhi', 'bombay': 'mumbai', 'navi mumbai': 'mumbai', 'thane': 'mumbai', 'bangalore': 'bengaluru', 'madras': 'chennai', 'calcutta': 'kolkata', 'cochin': 'kochi', 'ernakulam': 'kochi', 'north goa': 'goa', 'south goa': 'goa', 'panaji': 'goa', 'chandigarh tricity': 'chandigarh', 'mohali': 'chandigarh', 'secunderabad': 'hyderabad', 'cyberabad': 'hyderabad' });
-
-function resolveCity(...hints) {
-  for (const h of hints) {
-    if (!h) continue;
-    const s = String(h).toLowerCase();
-    if (CITY_ALIASES[s]) return CITY_ALIASES[s];
-    // search for any alias inside a free-text location
-    const found = Object.keys(CITY_ALIASES).sort((a, b) => b.length - a.length).find(a => a.length > 3 && s.includes(a));
-    if (found) return CITY_ALIASES[found];
-  }
-  return null;
-}
+const { resolveCity } = require('./cities');
 
 function resolveArea(cityId, locality, lat, lng) {
   const city = CITIES.find(c => c.id === cityId);
